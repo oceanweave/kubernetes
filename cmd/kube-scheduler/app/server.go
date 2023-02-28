@@ -313,6 +313,7 @@ func Setup(ctx context.Context, opts *options.Options, outOfTreeRegistryOptions 
 
 	recorderFactory := getRecorderFactory(&cc)
 	// Create the scheduler.
+	// dfy: 创建 scheduler damon 实例
 	sched, err := scheduler.New(cc.Client,
 		cc.InformerFactory,
 		recorderFactory,
