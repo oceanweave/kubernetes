@@ -78,6 +78,7 @@ kube-scheduler is the reference implementation.
 See [scheduling](https://kubernetes.io/docs/concepts/scheduling-eviction/)
 for more information about scheduling and the kube-scheduler component.`,
 		Run: func(cmd *cobra.Command, args []string) {
+			// dfy: 基于给定的配置 创建 scheduler
 			if err := runCommand(cmd, opts, registryOptions...); err != nil {
 				fmt.Fprintf(os.Stderr, "%v\n", err)
 				os.Exit(1)
@@ -124,6 +125,7 @@ func runCommand(cmd *cobra.Command, opts *options.Options, registryOptions ...Op
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// dfy: 创建 scheduler 实例
 	cc, sched, err := Setup(ctx, opts, registryOptions...)
 	if err != nil {
 		return err
@@ -137,6 +139,7 @@ func runCommand(cmd *cobra.Command, opts *options.Options, registryOptions ...Op
 		return nil
 	}
 
+	// dfy: 运行 scheduler
 	return Run(ctx, cc, sched)
 }
 
