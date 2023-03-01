@@ -212,6 +212,7 @@ func Run(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *
 	}
 
 	// Leader election is disabled, so runCommand inline until done.
+	// dfy: 准备执行调度
 	sched.Run(ctx)
 	return fmt.Errorf("finished without leader elect")
 }

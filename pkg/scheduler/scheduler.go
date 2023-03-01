@@ -307,6 +307,8 @@ func initPolicyFromConfigMap(client clientset.Interface, policyRef *schedulerapi
 // Run begins watching and scheduling. It waits for cache to be synced, then starts scheduling and blocked until the context is done.
 func (sched *Scheduler) Run(ctx context.Context) {
 	sched.SchedulingQueue.Run()
+	// dfy: 这里 period 为 0，表示一直调用 sched.scheduleOne 函数
+	// dfy: 收到 ctx.Done() 的信号才会退出，否则就一直执行 sched.scheduleOne 函数
 	wait.UntilWithContext(ctx, sched.scheduleOne, 0)
 	sched.SchedulingQueue.Close()
 }
@@ -435,13 +437,17 @@ func (sched *Scheduler) finishBinding(prof *profile.Profile, assumed *v1.Pod, ta
 }
 
 // scheduleOne does the entire scheduling workflow for a single pod.  It is serialized on the scheduling algorithm's host fitting.
+// dfy: scheduleOne实现1个pod的完整调度工作流，这个过程是顺序执行的，也就是非并发的。
+// dfy: 结合前面的wait.Until逻辑，也就是说前一个pod的scheduleOne一完成，一个return，下一个pod的scheduleOne立马接着执行！
 func (sched *Scheduler) scheduleOne(ctx context.Context) {
+	// dfy: 获取 Pod 信息
 	podInfo := sched.NextPod()
 	// pod could be nil when schedulerQueue is closed
 	if podInfo == nil || podInfo.Pod == nil {
 		return
 	}
 	pod := podInfo.Pod
+	// dfy: 获取 Pod 配置的 scheduler 调度器配置（默认是 default scheduler）
 	prof, err := sched.profileForPod(pod)
 	if err != nil {
 		// This shouldn't happen, because we only accept for scheduling the pods
@@ -449,6 +455,9 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		klog.Error(err)
 		return
 	}
+	// dfy: 考虑两种情况
+	// 1. Pod 已经被删除，pod.DeletionTimestamp != nil
+	// 2. Pod 是 assumed Pod 且 Pod 的更新可以被忽略（ Pod 在 assumed 之前，若获得 update，会作为 assumed Pod 被重新加入到调度队列）
 	if sched.skipPodSchedule(prof, pod) {
 		return
 	}
@@ -457,7 +466,9 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 
 	// Synchronously attempt to find a fit for the pod.
 	start := time.Now()
+	// dfy: 初始化公共数据存储？
 	state := framework.NewCycleState()
+	// dfy: 10% 的时间进行数据采样？
 	state.SetRecordPluginMetrics(rand.Intn(100) < pluginMetricsSamplePercent)
 	schedulingCycleCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -639,6 +650,8 @@ func (sched *Scheduler) skipPodSchedule(prof *profile.Profile, pod *v1.Pod) bool
 	// Case 2: pod has been assumed and pod updates could be skipped.
 	// An assumed pod can be added again to the scheduling queue if it got an update event
 	// during its previous scheduling cycle but before getting assumed.
+	// dfy: pod 已经被 假定assumed 并且 Pod 的更新可以被忽略
+	// dfy: assumed pod 可以再次添加到调度队列中，如果它在前一个调度周期中获得了更新事件，但是在假定之前。
 	if sched.skipPodUpdate(pod) {
 		return true
 	}

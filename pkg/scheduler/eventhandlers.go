@@ -327,6 +327,7 @@ func (sched *Scheduler) skipPodUpdate(pod *v1.Pod) bool {
 
 	// Compares the assumed pod in the cache with the pod update. If they are
 	// equal (with certain fields excluded), this pod update will be skipped.
+	// dfy: 若去掉某些字段，assumed Pod 和 原 Pod 相同，那么可以此次调度可以忽略这些更新
 	f := func(pod *v1.Pod) *v1.Pod {
 		p := pod.DeepCopy()
 		// ResourceVersion must be excluded because each object update will

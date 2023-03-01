@@ -135,15 +135,19 @@ func (g *genericScheduler) snapshot() error {
 // Schedule tries to schedule the given pod to one of the nodes in the node list.
 // If it succeeds, it will return the name of the node.
 // If it fails, it will return a FitError error with reasons.
+// dfy: 尝试将 Pod 调度到合适的 Node 上，若成功，就返回 Node 的 name
 func (g *genericScheduler) Schedule(ctx context.Context, prof *profile.Profile, state *framework.CycleState, pod *v1.Pod) (result ScheduleResult, err error) {
 	trace := utiltrace.New("Scheduling", utiltrace.Field{Key: "namespace", Value: pod.Namespace}, utiltrace.Field{Key: "name", Value: pod.Name})
+	// dfy: 如果 log level >= 4 或 此次 trace 的长度大于 100ms，将会将此次 trace 记录到 log 中
 	defer trace.LogIfLong(100 * time.Millisecond)
 
+	// dfy: 检查持久卷 pvc 和 临时卷 ephemeral —— 是否存在？是否被删除？临时卷是否由该 Pod 管控？
 	if err := podPassesBasicChecks(pod, g.pvcLister); err != nil {
 		return result, err
 	}
 	trace.Step("Basic checks done")
 
+	// dfy: 更新 node list（包含三种 list ： all node list， with pod affinity node list， with pod antiaffinity  node list）
 	if err := g.snapshot(); err != nil {
 		return result, err
 	}
@@ -586,6 +590,7 @@ func (g *genericScheduler) prioritizeNodes(
 }
 
 // podPassesBasicChecks makes sanity checks on the pod if it can be scheduled.
+// dfy: 检查持久卷 pvc 要存在，且没被删除；同时要检查临时卷 ephemeral 也要粗在，没有被删除，同时所属者是 该 Pod
 func podPassesBasicChecks(pod *v1.Pod, pvcLister corelisters.PersistentVolumeClaimLister) error {
 	// Check PVCs used by the pod
 	namespace := pod.Namespace
@@ -595,8 +600,10 @@ func podPassesBasicChecks(pod *v1.Pod, pvcLister corelisters.PersistentVolumeCla
 		var pvcName string
 		ephemeral := false
 		switch {
+		// dfy: 持久存储卷 https://kubernetes.io/zh-cn/docs/concepts/storage/persistent-volumes/
 		case volume.PersistentVolumeClaim != nil:
 			pvcName = volume.PersistentVolumeClaim.ClaimName
+			// dfy: 临时存储卷 https://kubernetes.io/zh-cn/docs/concepts/storage/ephemeral-volumes/
 		case volume.Ephemeral != nil &&
 			utilfeature.DefaultFeatureGate.Enabled(features.GenericEphemeralVolume):
 			pvcName = pod.Name + "-" + volume.Name
@@ -615,6 +622,16 @@ func podPassesBasicChecks(pod *v1.Pod, pvcLister corelisters.PersistentVolumeCla
 			return fmt.Errorf("persistentvolumeclaim %q is being deleted", pvc.Name)
 		}
 
+		// dfy: 若临时存储卷的属主不是 该 Pod，报错
+		// 就资源所有权而言， 拥有通用临时存储的 Pod 是提供临时存储 (ephemeral storage) 的 PersistentVolumeClaim 的所有者
+		// 自动创建的 PVC 采取确定性的命名机制：名称是 Pod 名称和卷名称的组合，中间由连字符(-)连接。 在上面的示例中，PVC 将命名为 my-app-scratch-volume 。
+		// 这种确定性的命名机制使得与 PVC 交互变得更容易，因为一旦知道 Pod 名称和卷名，就不必搜索它。
+		// 这种命名机制也引入了潜在的冲突， 不同的 Pod 之间（名为 “Pod-a” 的 Pod 挂载名为 "scratch" 的卷， 和名为 "pod" 的 Pod 挂载名为 “a-scratch” 的卷，
+		// 这两者均会生成名为 "pod-a-scratch" 的 PVC），或者在 Pod 和手工创建的 PVC 之间可能出现冲突。
+		//
+		// ephemeral 临时卷会遵从 Pod 的生命周期，与 Pod 一起创建和删除， 所以停止和重新启动 Pod 时，不会受持久卷在何处可用的限制
+		// https://kubernetes.io/zh-cn/docs/concepts/storage/ephemeral-volumes/
+		// 所以 ephemeral 在 Pod 调度前就会被创建吗？
 		if ephemeral &&
 			!metav1.IsControlledBy(pvc, pod) {
 			return fmt.Errorf("persistentvolumeclaim %q was not created for the pod", pvc.Name)

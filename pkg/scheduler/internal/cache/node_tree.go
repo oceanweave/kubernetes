@@ -29,8 +29,11 @@ import (
 // NodeTree is NOT thread-safe, any concurrent updates/reads from it must be synchronized by the caller.
 // It is used only by schedulerCache, and should stay as such.
 type nodeTree struct {
-	tree      map[string]*nodeArray // a map from zone (region-zone) to an array of nodes in the zone.
-	zones     []string              // a list of all the zones in the tree (keys)
+	// dfy： key 为 topology key，value 为在此 topology key 下的 所有 nodes
+	tree map[string]*nodeArray // a map from zone (region-zone) to an array of nodes in the zone.
+	// dfy: zones 可以理解为 topology key 集合，就是有多少种拓扑
+	zones []string // a list of all the zones in the tree (keys)
+	// dfy: 记录遍历 zones 数据，遍历到的位置
 	zoneIndex int
 	numNodes  int
 }
@@ -39,7 +42,8 @@ type nodeTree struct {
 // We use a slice (as opposed to a set/map) to store the nodes because iterating over the nodes is
 // a lot more frequent than searching them by name.
 type nodeArray struct {
-	nodes     []string
+	nodes []string
+	// dfy: lastIndex 记录遍历当前 nodes 数组，遍历的位置
 	lastIndex int
 }
 
@@ -136,9 +140,11 @@ func (nt *nodeTree) updateNode(old, new *v1.Node) {
 }
 
 func (nt *nodeTree) resetExhausted() {
+	// dfy: 重置，用于遍历 zone 下的 nodes 集合（就是不同topology key 对应的 所有 nodes）
 	for _, na := range nt.tree {
 		na.lastIndex = 0
 	}
+	// dfy: 重置，用于遍历 zones 集合（就是 topology key集合）
 	nt.zoneIndex = 0
 }
 
@@ -153,17 +159,22 @@ func (nt *nodeTree) next() string {
 		if nt.zoneIndex >= len(nt.zones) {
 			nt.zoneIndex = 0
 		}
+		// dfy: zones 应该是 topology key 集合，这里是取出一个 topology key
 		zone := nt.zones[nt.zoneIndex]
 		nt.zoneIndex++
 		// We do not check the exhausted zones before calling next() on the zone. This ensures
 		// that if more nodes are added to a zone after it is exhausted, we iterate over the new nodes.
+		// dfy：从该 topology key 对应的 node 集合中，逐个取出 pod
 		nodeName, exhausted := nt.tree[zone].next()
 		if exhausted {
+			// dfy: 当前 zone 已取完，取下一个 zone
 			numExhaustedZones++
+			// dfy: 所有 zone 都取完
 			if numExhaustedZones >= len(nt.zones) { // all zones are exhausted. we should reset.
 				nt.resetExhausted()
 			}
 		} else {
+			// dfy: 返回此次 取出的 nodename
 			return nodeName
 		}
 	}

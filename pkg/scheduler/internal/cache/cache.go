@@ -203,45 +203,57 @@ func (cache *schedulerCache) Dump() *Dump {
 func (cache *schedulerCache) UpdateSnapshot(nodeSnapshot *Snapshot) error {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
+	// dfy: 平衡 volume 分布开关？
 	balancedVolumesEnabled := utilfeature.DefaultFeatureGate.Enabled(features.BalanceAttachedNodeVolumes)
 
 	// Get the last generation of the snapshot.
+	// dfy: 获取最近一次节点快照
 	snapshotGeneration := nodeSnapshot.generation
 
 	// NodeInfoList and HavePodsWithAffinityNodeInfoList must be re-created if a node was added
 	// or removed from the cache.
+	// dfy：若一个 node 被添加或移除 cache，NodeInfoList and HavePodsWithAffinityNodeInfoList 必须要重建
 	updateAllLists := false
 	// HavePodsWithAffinityNodeInfoList must be re-created if a node changed its
 	// status from having pods with affinity to NOT having pods with affinity or the other
 	// way around.
+	// dfy：若一个 node 从具有亲和的 pod 到 没有亲和的 Pod 或其他方式，需要重建 updateNodesHavePodsWithAffinity
 	updateNodesHavePodsWithAffinity := false
 	// HavePodsWithRequiredAntiAffinityNodeInfoList must be re-created if a node changed its
 	// status from having pods with required anti-affinity to NOT having pods with required
 	// anti-affinity or the other way around.
+	// dfy: 若一个 node 从具有反亲和的 pod 到 没有反亲和的 Pod 或其他方式，需要重建 HavePodsWithRequiredAntiAffinityNodeInfoList
 	updateNodesHavePodsWithRequiredAntiAffinity := false
 
 	// Start from the head of the NodeInfo doubly linked list and update snapshot
 	// of NodeInfos updated after the last snapshot.
+	// 从 NodeInfo 双向链表的头部开始，更新上次快照后更新的 NodeInfos 快照
 	for node := cache.headNode; node != nil; node = node.next {
 		if node.info.Generation <= snapshotGeneration {
 			// all the nodes are updated before the existing snapshot. We are done.
 			break
 		}
+		// 下面的情况都是 node.info.Generation > snapshotGeneration
 		if balancedVolumesEnabled && node.info.TransientInfo != nil {
 			// Transient scheduler info is reset here.
+			// 重置暂时调度信息 node.info.TransientInfo
 			node.info.TransientInfo.ResetTransientSchedulerInfo()
 		}
 		if np := node.info.Node(); np != nil {
+			// dfy: 从 snapshot 缓存中取出 node info
 			existing, ok := nodeSnapshot.nodeInfoMap[np.Name]
 			if !ok {
+				// dfy: 获取不到该 node 信息，需要考虑更新 节点列表
 				updateAllLists = true
 				existing = &framework.NodeInfo{}
 				nodeSnapshot.nodeInfoMap[np.Name] = existing
 			}
+			// dfy: 复制当前 cache 缓存中的 node info
 			clone := node.info.Clone()
 			// We track nodes that have pods with affinity, here we check if this node changed its
 			// status from having pods with affinity to NOT having pods with affinity or the other
 			// way around.
+			// dfy: 若从具有亲和 Pod，到没有亲和 Pod，就需要考虑更新 node 列表。但不需要考虑亲和node 的 Pod 数量
 			if (len(existing.PodsWithAffinity) > 0) != (len(clone.PodsWithAffinity) > 0) {
 				updateNodesHavePodsWithAffinity = true
 			}
@@ -250,9 +262,11 @@ func (cache *schedulerCache) UpdateSnapshot(nodeSnapshot *Snapshot) error {
 			}
 			// We need to preserve the original pointer of the NodeInfo struct since it
 			// is used in the NodeInfoList, which we may not update.
+			// dfy: 更新 snapshot 中 node 信息为 cache 中 node info
 			*existing = *clone
 		}
 	}
+	// dfy: 更新 nodeSnapshot 为当前 cache 记录的版本号（也叫 Generation)
 	// Update the snapshot generation with the latest NodeInfo generation.
 	if cache.headNode != nil {
 		nodeSnapshot.generation = cache.headNode.info.Generation
@@ -261,11 +275,13 @@ func (cache *schedulerCache) UpdateSnapshot(nodeSnapshot *Snapshot) error {
 	// Comparing to pods in nodeTree.
 	// Deleted nodes get removed from the tree, but they might remain in the nodes map
 	// if they still have non-deleted Pods.
+	// dfu：对比上一次快照，有 node 删除了
 	if len(nodeSnapshot.nodeInfoMap) > cache.nodeTree.numNodes {
 		cache.removeDeletedNodesFromSnapshot(nodeSnapshot)
 		updateAllLists = true
 	}
 
+	// dfy: 根据之前的标志，更新对应的 node list
 	if updateAllLists || updateNodesHavePodsWithAffinity || updateNodesHavePodsWithRequiredAntiAffinity {
 		cache.updateNodeInfoSnapshotList(nodeSnapshot, updateAllLists)
 	}
@@ -289,9 +305,11 @@ func (cache *schedulerCache) UpdateSnapshot(nodeSnapshot *Snapshot) error {
 func (cache *schedulerCache) updateNodeInfoSnapshotList(snapshot *Snapshot, updateAll bool) {
 	snapshot.havePodsWithAffinityNodeInfoList = make([]*framework.NodeInfo, 0, cache.nodeTree.numNodes)
 	snapshot.havePodsWithRequiredAntiAffinityNodeInfoList = make([]*framework.NodeInfo, 0, cache.nodeTree.numNodes)
+	// dfy: updateAll 为 true，更新所有 node list（node list(记录所有node），affinity node list，antiaffinity node list）
 	if updateAll {
 		// Take a snapshot of the nodes order in the tree
 		snapshot.nodeInfoList = make([]*framework.NodeInfo, 0, cache.nodeTree.numNodes)
+		// dfy: 重置遍历 index 值，用于遍历 不同 topology key 下的 nodes 集合
 		cache.nodeTree.resetExhausted()
 		for i := 0; i < cache.nodeTree.numNodes; i++ {
 			nodeName := cache.nodeTree.next()
@@ -307,7 +325,7 @@ func (cache *schedulerCache) updateNodeInfoSnapshotList(snapshot *Snapshot, upda
 				klog.Errorf("node %q exist in nodeTree but not in NodeInfoMap, this should not happen.", nodeName)
 			}
 		}
-	} else {
+	} else { // dfy: updateAll 为 true，更新 affinity node list，antiaffinity node list
 		for _, n := range snapshot.nodeInfoList {
 			if len(n.PodsWithAffinity) > 0 {
 				snapshot.havePodsWithAffinityNodeInfoList = append(snapshot.havePodsWithAffinityNodeInfoList, n)
