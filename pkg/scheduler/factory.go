@@ -154,6 +154,7 @@ func (c *Configurator) create() (*Scheduler, error) {
 
 	// The nominator will be passed all the way to framework instantiation.
 	nominator := internalqueue.NewSafePodNominator(c.informerFactory.Core().V1().Pods().Lister())
+	// dfy: 创建 scheduler profile（就是用于调度插件的注册和执行）
 	profiles, err := profile.NewMap(c.profiles, c.buildFramework, c.recorderFactory,
 		frameworkruntime.WithPodNominator(nominator))
 	if err != nil {
@@ -216,6 +217,7 @@ func (c *Configurator) createFromProvider(providerName string) (*Scheduler, erro
 		plugins.Apply(prof.Plugins)
 		prof.Plugins = plugins
 	}
+	// dfy: 包含创建 scheduler profile（就是用于调度插件的注册和执行）
 	return c.create()
 }
 
@@ -315,6 +317,7 @@ func (c *Configurator) createFromConfig(policy schedulerapi.Policy) (*Scheduler,
 		prof.PluginConfig = defPluginConfig
 	}
 
+	// dfy: 包含创建 scheduler profile（就是用于调度插件的注册和执行）
 	return c.create()
 }
 

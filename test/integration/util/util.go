@@ -83,6 +83,7 @@ func StartScheduler(clientSet clientset.Interface) (*scheduler.Scheduler, corein
 
 	evtBroadcaster.StartRecordingToSink(ctx.Done())
 
+	// dfy: 包含创建 scheduler profile（就是用于调度插件的注册和执行）
 	sched, err := scheduler.New(
 		clientSet,
 		informerFactory,

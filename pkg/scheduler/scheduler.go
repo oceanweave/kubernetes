@@ -230,6 +230,7 @@ func New(client clientset.Interface,
 	switch {
 	case source.Provider != nil:
 		// Create the config from a named algorithm provider.
+		// dfy: 包含创建 scheduler profile（就是用于调度插件的注册和执行）
 		sc, err := configurator.createFromProvider(*source.Provider)
 		if err != nil {
 			return nil, fmt.Errorf("couldn't create scheduler using provider %q: %v", *source.Provider, err)
@@ -252,6 +253,7 @@ func New(client clientset.Interface,
 		// In this case, c.extenders should be nil since we're using a policy (and therefore not componentconfig,
 		// which would have set extenders in the above instantiation of Configurator from CC options)
 		configurator.extenders = policy.Extenders
+		// dfy: 包含创建 scheduler profile（就是用于调度插件的注册和执行）
 		sc, err := configurator.createFromConfig(*policy)
 		if err != nil {
 			return nil, fmt.Errorf("couldn't create scheduler from policy: %v", err)

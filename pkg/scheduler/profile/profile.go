@@ -38,6 +38,8 @@ type FrameworkFactory func(config.KubeSchedulerProfile, ...frameworkruntime.Opti
 
 // Profile is a scheduling profile.
 type Profile struct {
+	// dfy: 该接口实现位置 pkg/scheduler/framework/runtime/framework.go
+	// 该接口非常重要，定义了调用各种调度插件的方法
 	framework.Framework
 	Recorder events.EventRecorder
 	Name     string
@@ -72,6 +74,7 @@ func NewMap(cfgs []config.KubeSchedulerProfile, frameworkFact FrameworkFactory, 
 		if err := v.validate(cfg); err != nil {
 			return nil, err
 		}
+		// dfy: 创建 scheduler profile（就是用于调度插件的注册和执行）
 		p, err := NewProfile(cfg, frameworkFact, recorderFact, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("creating profile for scheduler name %s: %v", cfg.SchedulerName, err)

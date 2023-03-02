@@ -240,6 +240,8 @@ type PreFilterPlugin interface {
 	Plugin
 	// PreFilter is called at the beginning of the scheduling cycle. All PreFilter
 	// plugins must return success or the pod will be rejected.
+	// dfy: PreFilter 一般做一些信息统计（ pod 信息，pod 间信息，port 信息，或和你开发插件有关的信息）
+	// dfy: 所有 PreFilter 必须返回 success，Pod 才不会被拒绝。（若获取不到 pod 信息，或不满足过滤条件等，PreFilter 可能会返回 Error）
 	PreFilter(ctx context.Context, state *CycleState, p *v1.Pod) *Status
 	// PreFilterExtensions returns a PreFilterExtensions interface if the plugin implements one,
 	// or nil if it does not. A Pre-filter plugin can provide extensions to incrementally
@@ -247,6 +249,14 @@ type PreFilterPlugin interface {
 	// AddPod/RemovePod will only be called after PreFilter, possibly on a cloned
 	// CycleState, and may call those functions more than once before calling
 	// Filter again on a specific node.
+	// dfy: 可以看一下返回参数 PreFilterExtensions 是个接口，需要实现 AddPod，RemovedPod
+	// dfy: 该函数作用就是，以增量方式修改 PreFilter 处理过的信息（比如添加抢占 Pod 信息）
+	// dfy: 因此 PreFilterExtensions 位于 PreFilter 后，位于 Filter 前，可能会被调用多次
+	// dfy: 调度插件也可以不实现 PreFilterExtensions 接口，这样就不做处理
+	// dfy: 举个例子 podinteraffinity 实现里此接口，因为此插件 PreFilter 是梳理过滤出与待调度 Pod 亲和和反亲和 pod 列表
+	// dfy: 因此，若来一个抢占 Pod，也就是新 Pod，那么就需要考虑如何添加到上面的 亲和和反亲和 pod 列表 中
+	// dfy: 也就是要 podinteraffinity 调度擦肩实现 PreFilterExtensions 接口，就是 AddPod，RemovedPod 函数
+	// dfy: 可以查看此插件 pkg/scheduler/framework/plugins/interpodaffinity/filtering.go
 	PreFilterExtensions() PreFilterExtensions
 }
 

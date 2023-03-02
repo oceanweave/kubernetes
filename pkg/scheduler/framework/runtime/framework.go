@@ -67,17 +67,18 @@ type frameworkImpl struct {
 	snapshotSharedLister  framework.SharedLister
 	waitingPods           *waitingPodsMap
 	pluginNameToWeightMap map[string]int
-	queueSortPlugins      []framework.QueueSortPlugin
-	preFilterPlugins      []framework.PreFilterPlugin
-	filterPlugins         []framework.FilterPlugin
-	postFilterPlugins     []framework.PostFilterPlugin
-	preScorePlugins       []framework.PreScorePlugin
-	scorePlugins          []framework.ScorePlugin
-	reservePlugins        []framework.ReservePlugin
-	preBindPlugins        []framework.PreBindPlugin
-	bindPlugins           []framework.BindPlugin
-	postBindPlugins       []framework.PostBindPlugin
-	permitPlugins         []framework.PermitPlugin
+	// dfy: 存储着每个调度卡点  注册的  处理函数（如 filter卡点多种过滤函数，score卡点多种打分函数）
+	queueSortPlugins  []framework.QueueSortPlugin
+	preFilterPlugins  []framework.PreFilterPlugin
+	filterPlugins     []framework.FilterPlugin
+	postFilterPlugins []framework.PostFilterPlugin
+	preScorePlugins   []framework.PreScorePlugin
+	scorePlugins      []framework.ScorePlugin
+	reservePlugins    []framework.ReservePlugin
+	preBindPlugins    []framework.PreBindPlugin
+	bindPlugins       []framework.BindPlugin
+	postBindPlugins   []framework.PostBindPlugin
+	permitPlugins     []framework.PermitPlugin
 
 	clientSet       clientset.Interface
 	eventRecorder   events.EventRecorder
@@ -391,18 +392,23 @@ func (f *frameworkImpl) RunPreFilterPlugins(ctx context.Context, state *framewor
 	defer func() {
 		metrics.FrameworkExtensionPointDuration.WithLabelValues(preFilter, status.Code().String(), f.profileName).Observe(metrics.SinceInSeconds(startTime))
 	}()
+	// dfy: 从 scheduler profile 中取出注册的  preFilterPlugin 进行逐个运行
 	for _, pl := range f.preFilterPlugins {
 		status = f.runPreFilterPlugin(ctx, pl, state, pod)
 		if !status.IsSuccess() {
+			// dfy: 不可调度原因可能有：获取 Pod 信息失败，解析 Pod 信息失败等
 			if status.IsUnschedulable() {
 				return status
 			}
+			// dfy: 错误原因可能有：获取 nodelist 失败等
 			msg := fmt.Sprintf("prefilter plugin %q failed for pod %q: %v", pl.Name(), pod.Name, status.Message())
 			klog.Error(msg)
 			return framework.NewStatus(framework.Error, msg)
 		}
 	}
 
+	// dfy: 可能会好奇，经过 preFilter 过滤处理后，符合条件的节点呢? 怎么没有返回？
+	// 答： cycleState *framework.CycleState 实际上是将筛选符合条件的 node list，存在这个结构体中，此结构体用于传递【中间态信息】
 	return nil
 }
 
@@ -508,6 +514,7 @@ func (f *frameworkImpl) RunFilterPlugins(
 				errStatus := framework.NewStatus(framework.Error, fmt.Sprintf("running %q filter plugin for pod %q: %v", pl.Name(), pod.Name, pluginStatus.Message()))
 				return map[string]*framework.Status{pl.Name(): errStatus}
 			}
+			// dfy: key 为 Filter插件名称， value 为处理后的状态（是否通过 filter？）
 			statuses[pl.Name()] = pluginStatus
 			if !f.runAllFilters {
 				// Exit early if we don't need to run all filters.

@@ -41,8 +41,14 @@ type StateKey string
 // StateData stored by one plugin can be read, altered, or deleted by another plugin.
 // CycleState does not provide any data protection, as all plugins are assumed to be
 // trusted.
+// dfy: 此结构体用于传递调度插件的中间处理结果，如 prefilter 筛选出 node list 后，需要传递给 filter 进行下一步处理
+//
 type CycleState struct {
-	mx      sync.RWMutex
+	mx sync.RWMutex
+	// dfy:
+	// StateKey 命名规范为 调度卡点名（PreFilter）+插件名称（interpodaffinity） 比如 PreFilterinterpodaffinity
+	// StateData 是实现 Clone 方法的结构体，该结构体存储着（筛选后的 node list，当前正在调度的 Pod 等信息）
+	// 具体使用，可以随意挑选个调度插件查看，如 pkg/scheduler/framework/plugins/interpodaffinity/filtering.go
 	storage map[StateKey]StateData
 	// if recordPluginMetrics is true, PluginExecutionDuration will be recorded for this cycle.
 	recordPluginMetrics bool
