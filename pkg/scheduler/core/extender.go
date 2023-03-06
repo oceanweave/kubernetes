@@ -375,6 +375,7 @@ func (h *HTTPExtender) Prioritize(pod *v1.Pod, nodes []*v1.Node) (*extenderv1.Ho
 		NodeNames: nodeNames,
 	}
 
+	// dfy: extender 应该是个 http 服务
 	if err := h.send(h.prioritizeVerb, args, &result); err != nil {
 		return nil, 0, err
 	}

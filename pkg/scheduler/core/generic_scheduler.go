@@ -182,6 +182,7 @@ func (g *genericScheduler) Schedule(ctx context.Context, prof *profile.Profile, 
 
 	startPriorityEvalTime := time.Now()
 	// When only one node after predicate, just use it.
+	// dfy: 预选只选出一个 node，直接返回 进行使用
 	if len(feasibleNodes) == 1 {
 		metrics.DeprecatedSchedulingAlgorithmPriorityEvaluationSecondsDuration.Observe(metrics.SinceInSeconds(startPriorityEvalTime))
 		return ScheduleResult{
@@ -191,6 +192,12 @@ func (g *genericScheduler) Schedule(ctx context.Context, prof *profile.Profile, 
 		}, nil
 	}
 
+	// 1. 调用所有 PreScore plugin 为所有 node 打分
+	// 2. 调用所有 Score plugin 将 node 的得分（第一步获得的）正则化（分数变为 0-100 之间），并乘上插件对应的权重 weight
+	// 3. 将 node 在不同 Score plugin 下的得分累加起来，作为此 node  的暂时得分
+	// 4. 若有 extender 插件，需要运行所有 extender 插件，为所有 node 打分，每个 node 将所有 extender 的打分累加起来
+	// 5. 将第 3 部分的得分 + 第 4 部分得分 * 优先级系数 =》 此 node 的最终得分
+	// ps: extender 应该是个 http 服务, 发起请求，返回对应的打分
 	priorityList, err := g.prioritizeNodes(ctx, prof, state, pod, feasibleNodes)
 	if err != nil {
 		return result, err
@@ -297,7 +304,7 @@ func (g *genericScheduler) findNodesThatFitPod(ctx context.Context, prof *profil
 		return nil, nil, err
 	}
 
-	// dfy: 记录通过 extender Filter 筛选的 node list
+	// dfy: 记录通过 extender Filter 筛选的 node list；将上一步筛选得到的 feasibleNodes 进行再一次筛选
 	feasibleNodes, err = g.findNodesThatPassExtenders(pod, feasibleNodes, filteredNodesStatuses)
 	if err != nil {
 		return nil, nil, err
@@ -409,6 +416,7 @@ func (g *genericScheduler) findNodesThatPassExtenders(pod *v1.Pod, feasibleNodes
 			return nil, err
 		}
 
+		// dfy: 没有通过 extender filter 的 node，也记录下来
 		for failedNodeName, failedMsg := range failedMap {
 			if _, found := statuses[failedNodeName]; !found {
 				statuses[failedNodeName] = framework.NewStatus(framework.Unschedulable, failedMsg)
@@ -551,6 +559,7 @@ func PodPassesFiltersOnNode(
 // The scores from each plugin are added together to make the score for that node, then
 // any extenders are run as well.
 // All scores are finally combined (added) to get the total weighted scores of all nodes
+// dfy: 优选，调用打分插件为 各个node 打分，并将分数累加起来 乘以权重 weight，从而得到对应的分数
 func (g *genericScheduler) prioritizeNodes(
 	ctx context.Context,
 	prof *profile.Profile,
@@ -572,12 +581,16 @@ func (g *genericScheduler) prioritizeNodes(
 	}
 
 	// Run PreScore plugins.
+	// dfy: 运行 PreScore 所有打分插件
+	// dfy: 每个 PreScore plugin 为所有 node 打分
 	preScoreStatus := prof.RunPreScorePlugins(ctx, state, pod, nodes)
 	if !preScoreStatus.IsSuccess() {
 		return nil, preScoreStatus.AsError()
 	}
 
 	// Run the Score plugins.
+	// dfy: 运行 Score 打分插件
+	// dfy: 将 PreScore 计算的分数，进行正则化，就是将分数变为 0-100 区间，之后乘上每个 Score 对应的权重 weight
 	scoresMap, scoreStatus := prof.RunScorePlugins(ctx, state, pod, nodes)
 	if !scoreStatus.IsSuccess() {
 		return nil, scoreStatus.AsError()
@@ -592,6 +605,7 @@ func (g *genericScheduler) prioritizeNodes(
 	// Summarize all scores.
 	result := make(framework.NodeScoreList, 0, len(nodes))
 
+	// dfy: 将每个 score plugin 为 node 的打分，合计起来，作为 此 node 的得分
 	for i := range nodes {
 		result = append(result, framework.NodeScore{Name: nodes[i].Name, Score: 0})
 		for j := range scoresMap {
@@ -603,6 +617,7 @@ func (g *genericScheduler) prioritizeNodes(
 		var mu sync.Mutex
 		var wg sync.WaitGroup
 		combinedScores := make(map[string]int64, len(nodes))
+		// dfy: 计算各个 extender 对 node 的打分
 		for i := range g.extenders {
 			if !g.extenders[i].IsInterested(pod) {
 				continue
@@ -614,17 +629,21 @@ func (g *genericScheduler) prioritizeNodes(
 					metrics.SchedulerGoroutines.WithLabelValues("prioritizing_extender").Dec()
 					wg.Done()
 				}()
+				// dfy: 得到该 extender plugin 对 node 的打分
+				// dfy: extender 应该是个 http 服务, 发起请求，返回对应的打分
 				prioritizedList, weight, err := g.extenders[extIndex].Prioritize(pod, nodes)
 				if err != nil {
 					// Prioritization errors from extender can be ignored, let k8s/other extenders determine the priorities
 					return
 				}
 				mu.Lock()
+				// dfy: 将打分 * 对应的 weight
 				for i := range *prioritizedList {
 					host, score := (*prioritizedList)[i].Host, (*prioritizedList)[i].Score
 					if klog.V(10).Enabled() {
 						klog.Infof("%v -> %v: %v, Score: (%d)", util.GetPodFullName(pod), host, g.extenders[extIndex].Name(), score)
 					}
+					// dfy: 每个 node 累计记录所有 extender 的打分
 					combinedScores[host] += score * weight
 				}
 				mu.Unlock()
@@ -632,6 +651,7 @@ func (g *genericScheduler) prioritizeNodes(
 		}
 		// wait for all go routines to finish
 		wg.Wait()
+		// dfy: 将 extender 乘以设置的系数，累加到之前的 node 打分上
 		for i := range result {
 			// MaxExtenderPriority may diverge from the max priority used in the scheduler and defined by MaxNodeScore,
 			// therefore we need to scale the score returned by extenders to the score range used by the scheduler.

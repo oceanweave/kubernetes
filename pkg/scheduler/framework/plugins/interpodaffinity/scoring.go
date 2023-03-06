@@ -200,6 +200,7 @@ func (pl *InterPodAffinity) PreScore(
 		state.topologyScore.append(topoScores[i])
 	}
 
+	// dfy: 记录得分信息，用于函数间传递，创个 score 插件处理， 此处 key 为 prescore 的名称， state 为 当前插件为各个节点的打分
 	cycleState.Write(preScoreStateKey, state)
 	return nil
 }
@@ -244,6 +245,7 @@ func (pl *InterPodAffinity) Score(ctx context.Context, cycleState *framework.Cyc
 
 // NormalizeScore normalizes the score for each filteredNode.
 func (pl *InterPodAffinity) NormalizeScore(ctx context.Context, cycleState *framework.CycleState, pod *v1.Pod, scores framework.NodeScoreList) *framework.Status {
+	// dfy: 获取之前得到的分数
 	s, err := getPreScoreState(cycleState)
 	if err != nil {
 		return framework.NewStatus(framework.Error, err.Error())
@@ -263,6 +265,7 @@ func (pl *InterPodAffinity) NormalizeScore(ctx context.Context, cycleState *fram
 		}
 	}
 
+	// dfy: 计算每个节点的 正则得分 满分 100 分
 	maxMinDiff := maxCount - minCount
 	for i := range scores {
 		fScore := float64(0)

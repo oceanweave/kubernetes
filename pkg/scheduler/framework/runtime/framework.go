@@ -581,6 +581,7 @@ func (f *frameworkImpl) RunPreScorePlugins(
 	defer func() {
 		metrics.FrameworkExtensionPointDuration.WithLabelValues(preScore, status.Code().String(), f.profileName).Observe(metrics.SinceInSeconds(startTime))
 	}()
+	// dfy: range 可以看出，是运行所有注册的 pre
 	for _, pl := range f.preScorePlugins {
 		status = f.runPreScorePlugin(ctx, pl, state, pod, nodes)
 		if !status.IsSuccess() {
@@ -612,6 +613,7 @@ func (f *frameworkImpl) RunScorePlugins(ctx context.Context, state *framework.Cy
 	defer func() {
 		metrics.FrameworkExtensionPointDuration.WithLabelValues(score, status.Code().String(), f.profileName).Observe(metrics.SinceInSeconds(startTime))
 	}()
+	// dfy: 记录各个 score plugin，为所有节点的打分
 	pluginToNodeScores := make(framework.PluginToNodeScores, len(f.scorePlugins))
 	for _, pl := range f.scorePlugins {
 		pluginToNodeScores[pl.Name()] = make(framework.NodeScoreList, len(nodes))
@@ -623,6 +625,7 @@ func (f *frameworkImpl) RunScorePlugins(ctx context.Context, state *framework.Cy
 	parallelize.Until(ctx, len(nodes), func(index int) {
 		for _, pl := range f.scorePlugins {
 			nodeName := nodes[index].Name
+			// dfy: 运行各个 score plugin
 			s, status := f.runScorePlugin(ctx, pl, state, pod, nodeName)
 			if !status.IsSuccess() {
 				errCh.SendErrorWithCancel(fmt.Errorf(status.Message()), cancel)
@@ -641,12 +644,15 @@ func (f *frameworkImpl) RunScorePlugins(ctx context.Context, state *framework.Cy
 	}
 
 	// Run NormalizeScore method for each ScorePlugin in parallel.
+	// dfy: 每个插件的打分正则化处理  一共 len(f.scorePlugins) 个 score plugin
 	parallelize.Until(ctx, len(f.scorePlugins), func(index int) {
+		// dfy: 此处是获得 单个 score plugin
 		pl := f.scorePlugins[index]
 		nodeScoreList := pluginToNodeScores[pl.Name()]
 		if pl.ScoreExtensions() == nil {
 			return
 		}
+		// dfy: 打分正则化处理
 		status := f.runScoreExtension(ctx, pl, state, pod, nodeScoreList)
 		if !status.IsSuccess() {
 			err := fmt.Errorf("normalize score plugin %q failed with error %v", pl.Name(), status.Message())
@@ -664,9 +670,12 @@ func (f *frameworkImpl) RunScorePlugins(ctx context.Context, state *framework.Cy
 	parallelize.Until(ctx, len(f.scorePlugins), func(index int) {
 		pl := f.scorePlugins[index]
 		// Score plugins' weight has been checked when they are initialized.
+		// dfy: 获取单个 score plugin 的 node 打分，和设置的 weight
 		weight := f.pluginNameToWeightMap[pl.Name()]
+		// dfy: 注意 go 切片是引用，不是复制 https://blog.csdn.net/quicmous/article/details/86366247
 		nodeScoreList := pluginToNodeScores[pl.Name()]
 
+		// dfy: 将所有 node 的得分 * 设置的权重 weight
 		for i, nodeScore := range nodeScoreList {
 			// return error if score plugin returns invalid score.
 			if nodeScore.Score > int64(framework.MaxNodeScore) || nodeScore.Score < int64(framework.MinNodeScore) {
@@ -701,6 +710,7 @@ func (f *frameworkImpl) runScoreExtension(ctx context.Context, pl framework.Scor
 		return pl.ScoreExtensions().NormalizeScore(ctx, state, pod, nodeScoreList)
 	}
 	startTime := time.Now()
+	// dfy: 打分正则化处理
 	status := pl.ScoreExtensions().NormalizeScore(ctx, state, pod, nodeScoreList)
 	f.metricsRecorder.observePluginDurationAsync(scoreExtensionNormalize, pl.Name(), status, metrics.SinceInSeconds(startTime))
 	return status
