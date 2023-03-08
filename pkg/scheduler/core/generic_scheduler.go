@@ -182,7 +182,7 @@ func (g *genericScheduler) Schedule(ctx context.Context, prof *profile.Profile, 
 
 	startPriorityEvalTime := time.Now()
 	// When only one node after predicate, just use it.
-	// dfy: 预选只选出一个 node，直接返回 进行使用
+	// dfy: 若预选只选出一个 node，直接返回 进行使用
 	if len(feasibleNodes) == 1 {
 		metrics.DeprecatedSchedulingAlgorithmPriorityEvaluationSecondsDuration.Observe(metrics.SinceInSeconds(startPriorityEvalTime))
 		return ScheduleResult{
@@ -206,13 +206,14 @@ func (g *genericScheduler) Schedule(ctx context.Context, prof *profile.Profile, 
 	metrics.DeprecatedSchedulingAlgorithmPriorityEvaluationSecondsDuration.Observe(metrics.SinceInSeconds(startPriorityEvalTime))
 	metrics.DeprecatedSchedulingDuration.WithLabelValues(metrics.PriorityEvaluation).Observe(metrics.SinceInSeconds(startPriorityEvalTime))
 
+	// dfy: 选择得分高的，作为此次建议使用的 node
 	host, err := g.selectHost(priorityList)
 	trace.Step("Prioritizing done")
 
 	return ScheduleResult{
-		SuggestedHost:  host,
-		EvaluatedNodes: len(feasibleNodes) + len(filteredNodesStatuses),
-		FeasibleNodes:  len(feasibleNodes),
+		SuggestedHost:  host,                                            // dfy：建议使用的 node
+		EvaluatedNodes: len(feasibleNodes) + len(filteredNodesStatuses), // dfy: 此处表示此次评估的 node 数量
+		FeasibleNodes:  len(feasibleNodes),                              // dfy：通过预选的 node 数量
 	}, err
 }
 
@@ -299,6 +300,7 @@ func (g *genericScheduler) findNodesThatFitPod(ctx context.Context, prof *profil
 	}
 
 	// dfy: 记录通过 Filter 筛选的可用 node list
+	// dfy: 此处要考虑 Pod 的抢占
 	feasibleNodes, err := g.findNodesThatPassFilters(ctx, prof, state, pod, filteredNodesStatuses)
 	if err != nil {
 		return nil, nil, err

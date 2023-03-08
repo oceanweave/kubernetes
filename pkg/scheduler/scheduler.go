@@ -474,6 +474,16 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	state.SetRecordPluginMetrics(rand.Intn(100) < pluginMetricsSamplePercent)
 	schedulingCycleCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// dfy:
+	// 1. 检查临时卷 ephemeral 和 持久卷 pvc
+	// 2. prefilter 梳理 Pod 间的关系，或者是预先梳理一些关于 Pod 的筛选关系，记录在 cyclestate 中
+	// 3. 在 filter 之前需要考虑抢占 Pod 的情况，若有 Pod 抢占进来，需要在此时考虑，同时可以进行抢占的话，需要利用 PreFilterExtensions 接口定义的函数，更新 cyclestate 中记录的 prefilter 梳理的关系
+	// 4. 根据集群的比例，选择一定数量 num 的 node，通过 filter 函数对 node 进行筛选（从上次遍历的位置开始），直到达到数量 num
+	// 5. 在利用 Extender filter 对上面选出的 num 个 node 进行筛选，Extender filter 是个 http 服务，应该属于一个外挂的 webhook 服务（自己配置），之后选出的节点们叫做 feasibleNodes
+	// 6. 对第 5 步选出的 feasibleNodes 进行打分 PreScore，每个 preScore 插件都会打个分数
+	// 7. Score 插件，会对每个 node 获得的所有 preScore 分数，进行正则化（0-100），同时乘以相应的 weight，并进行累加，作为该 node 的得分
+	// 8. 调用 Extender Score http 服务，对所有 node 再次打分，并进行累加
+	// 9. 最后选出得分高的 一个 node，作为推荐使用的 node
 	scheduleResult, err := sched.Algorithm.Schedule(schedulingCycleCtx, prof, state, pod)
 	if err != nil {
 		// Schedule() may have failed because the pod would not fit on any host, so we try to
