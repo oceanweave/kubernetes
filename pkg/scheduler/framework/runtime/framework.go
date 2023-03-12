@@ -380,6 +380,7 @@ func (f *frameworkImpl) QueueSortFunc() framework.LessFunc {
 	}
 
 	// Only one QueueSort plugin can be enabled.
+	// dfy: 不明白此处为什么飘红  本质是一样的  framework.LessFunc  是用 type 进行了重命名
 	return f.queueSortPlugins[0].Less
 }
 
@@ -472,6 +473,7 @@ func (f *frameworkImpl) RunPreFilterExtensionRemovePod(
 		if pl.PreFilterExtensions() == nil {
 			continue
 		}
+		// dfy: 调用 PreFilterExtension 的 RemovePod 方法，在移除 Pod 后，更新 cyclestate 中记录 Prefilter 梳理的关系
 		status = f.runPreFilterExtensionRemovePod(ctx, pl, state, podToSchedule, podToRemove, nodeInfo)
 		if !status.IsSuccess() {
 			msg := fmt.Sprintf("error while running RemovePod for plugin %q while scheduling pod %q: %v",
@@ -489,6 +491,7 @@ func (f *frameworkImpl) runPreFilterExtensionRemovePod(ctx context.Context, pl f
 		return pl.PreFilterExtensions().RemovePod(ctx, state, podToSchedule, podToAdd, nodeInfo)
 	}
 	startTime := time.Now()
+	// dfy: 此处作用就是，调用 Prefilter 注册的 RemovePod 函数。该函数的作用就是：在移除 Pod 后，更新 cyclestate 中 filter 记录的对应信息
 	status := pl.PreFilterExtensions().RemovePod(ctx, state, podToSchedule, podToAdd, nodeInfo)
 	f.metricsRecorder.observePluginDurationAsync(preFilterExtensionRemovePod, pl.Name(), status, metrics.SinceInSeconds(startTime))
 	return status
@@ -546,6 +549,7 @@ func (f *frameworkImpl) RunPostFilterPlugins(ctx context.Context, state *framewo
 
 	statuses := make(framework.PluginToStatus)
 	for _, pl := range f.postFilterPlugins {
+		// dfy: 执行 PostFilter 插件
 		r, s := f.runPostFilterPlugin(ctx, pl, state, pod, filteredNodeStatusMap)
 		if s.IsSuccess() {
 			return r, s
@@ -564,6 +568,7 @@ func (f *frameworkImpl) runPostFilterPlugin(ctx context.Context, pl framework.Po
 		return pl.PostFilter(ctx, state, pod, filteredNodeStatusMap)
 	}
 	startTime := time.Now()
+	// dfy: 真正执行 PostFilter 插件
 	r, s := pl.PostFilter(ctx, state, pod, filteredNodeStatusMap)
 	f.metricsRecorder.observePluginDurationAsync(postFilter, pl.Name(), s, metrics.SinceInSeconds(startTime))
 	return r, s

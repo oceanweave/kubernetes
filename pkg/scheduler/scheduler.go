@@ -490,12 +490,26 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		// preempt, with the expectation that the next time the pod is tried for scheduling it
 		// will fit due to the preemption. It is also possible that a different pod will schedule
 		// into the resources that were preempted, but this is harmless.
+		// dfy: 此次调度失败，pod 没有找到合适的 host，所以我们尝试抢占，期待下次抢占能够调度成功
+		// dfy: 当然有可能另一个 Pod 抢占到资源，这也是无害的
 		nominatedNode := ""
 		if fitError, ok := err.(*core.FitError); ok {
 			if !prof.HasPostFilterPlugins() {
 				klog.V(3).Infof("No PostFilter plugins are registered, so no preemption will be performed.")
 			} else {
 				// Run PostFilter plugins to try to make the pod schedulable in a future scheduling cycle.
+				// dfy：此处调用 PostFilter 插件  PostFilter 实现是抢占，试图通过抢占其他 Pod 的资源使该 Pod 可以调度。
+				// PostFilter插件虽说是发生在Filter之后，但是确只能在Filter插件没有返回合适的node才执行。
+				// 在scheduler里默认的PostFilter插件只有一个功能，进行抢占调度。
+				// 抢占调度的原理：首先会将node上低于待调度pod的优先级的Pod全部剔除，当然这个只是模拟过程并不是真正将Pod从干掉，然后再次执行Filter插件，
+				// 如果失败了那就是抢占调度失败，
+				// 成功了则将前面剔除的pod一个一个加回来，每一次加回来 Pod, 都执行Filter插件确定是否可以添加此 Pod ，从而找出调度该Pod所需要剔除的最少的低优先级Pod。 —— 确定成功调度，所需驱逐的最少数量的低优先级 Pod
+				// 重点过程
+				// 1. 根据未成功调度的 node 和 PDB，梳理出候选 node 以及相应要驱逐的最少数量的 victims Pod（此过程是模拟调度，模拟更新 Prefilter 关系，并经过 Filter 插件筛选）
+				//    模拟抢占调度原理：首先驱逐所有低于待调度 Pod 优先级的 Pod，然后逐步添加其中的高优先级或受 PDB 保护的 Pod，每次添加和删除都需要经过 Prefilter 和 Filter 插件相关处理和检查
+				//    之后满足可以调度情况下，要驱逐的 Pod 记为该 node 的 victims Pod，同时记录其中违反 PDB 保护原则要驱逐的 Pod 数量 记为 numViolatingVictim
+				// 2. 在候选者中选择合适的 node，考虑相关一些因素（如 victims Pod 数量，优先级，优先级总和，最高优先级的 victims Pod 的最早启动时间等）
+				// 3. 真正调度前的准备工作，驱逐所有 victims Pod，停止 waiting Pod 和 清理 nominated Pod
 				result, status := prof.RunPostFilterPlugins(ctx, state, pod, fitError.FilteredNodesStatuses)
 				if status.Code() == framework.Error {
 					klog.Errorf("Status after running PostFilter plugins for pod %v/%v: %v", pod.Namespace, pod.Name, status)

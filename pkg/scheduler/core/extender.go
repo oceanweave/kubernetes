@@ -190,6 +190,7 @@ func (h *HTTPExtender) ProcessPreemption(
 		}
 	}
 
+	// dfy： 发送到 http  extender 进行处理
 	if err := h.send(h.preemptVerb, args, &result); err != nil {
 		return nil, err
 	}

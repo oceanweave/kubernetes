@@ -52,6 +52,7 @@ func GetPodStartTime(pod *v1.Pod) *metav1.Time {
 
 // GetEarliestPodStartTime returns the earliest start time of all pods that
 // have the highest priority among all victims.
+// dfy: 获取最高优先级 pod 中，最早启动的 Pod 时间
 func GetEarliestPodStartTime(victims *extenderv1.Victims) *metav1.Time {
 	if len(victims.Pods) == 0 {
 		// should not reach here.
