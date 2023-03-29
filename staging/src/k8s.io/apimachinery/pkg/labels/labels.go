@@ -75,6 +75,8 @@ func (ls Set) AsValidatedSelector() (Selector, error) {
 // perform any validation.
 // According to our measurements this is significantly faster
 // in codepaths that matter at high scale.
+// dfy: 将 labels 转换为 selector，这里假设 这些label 已经经过了 验证，因此不执行任何验证
+// dfy: 根据他们的测量，这在大规模代码路径上 效率很高
 func (ls Set) AsSelectorPreValidated() Selector {
 	return SelectorFromValidatedSet(ls)
 }

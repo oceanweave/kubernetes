@@ -195,20 +195,24 @@ func getPreFilterState(cycleState *framework.CycleState) (*preFilterState, error
 }
 
 // calPreFilterState computes preFilterState describing how pods are spread on topologies.
+// dfy: 计算 pod 的拓扑分布，记录到 preFilterState 中
 func (pl *PodTopologySpread) calPreFilterState(pod *v1.Pod) (*preFilterState, error) {
 	allNodes, err := pl.sharedLister.NodeInfos().List()
 	if err != nil {
 		return nil, fmt.Errorf("listing NodeInfos: %v", err)
 	}
 	var constraints []topologySpreadConstraint
+	// dfy: 1. 有配置 拓扑约束条件，筛选 DoNotSchedule 的约束
 	if len(pod.Spec.TopologySpreadConstraints) > 0 {
 		// We have feature gating in APIServer to strip the spec
 		// so don't need to re-check feature gate, just check length of Constraints.
+		// dfy: 记录配置 动作为 DoNotSchedule（不满足条件不调度）的 约束条件 constraints
 		constraints, err = filterTopologySpreadConstraints(pod.Spec.TopologySpreadConstraints, v1.DoNotSchedule)
 		if err != nil {
 			return nil, fmt.Errorf("obtaining pod's hard topology spread constraints: %v", err)
 		}
 	} else {
+		// dfy: 2. 没有配置 拓扑约束条件，采用默认配置的 拓扑约束，筛选 DoNotSchedule 的约束
 		constraints, err = pl.defaultConstraints(pod, v1.DoNotSchedule)
 		if err != nil {
 			return nil, fmt.Errorf("setting default hard topology spread constraints: %v", err)

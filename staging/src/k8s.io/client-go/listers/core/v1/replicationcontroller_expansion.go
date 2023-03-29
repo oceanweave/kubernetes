@@ -41,6 +41,7 @@ func (s *replicationControllerLister) GetPodControllers(pod *v1.Pod) ([]*v1.Repl
 		return nil, fmt.Errorf("no controllers found for pod %v because it has no labels", pod.Name)
 	}
 
+	// dfy： 获取该 pod 所在 namespace 下的所有 rcController
 	items, err := s.ReplicationControllers(pod.Namespace).List(labels.Everything())
 	if err != nil {
 		return nil, err
@@ -49,12 +50,14 @@ func (s *replicationControllerLister) GetPodControllers(pod *v1.Pod) ([]*v1.Repl
 	var controllers []*v1.ReplicationController
 	for i := range items {
 		rc := items[i]
+		// dfy: 将字段转为 selector
 		selector := labels.Set(rc.Spec.Selector).AsSelectorPreValidated()
 
 		// If an rc with a nil or empty selector creeps in, it should match nothing, not everything.
 		if selector.Empty() || !selector.Matches(labels.Set(pod.Labels)) {
 			continue
 		}
+		// dfy: 记录匹配上此 pod 的 rcController
 		controllers = append(controllers, rc)
 	}
 

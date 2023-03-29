@@ -46,7 +46,10 @@ func (pl *PodTopologySpread) defaultConstraints(p *v1.Pod, action v1.Unsatisfiab
 	if err != nil || len(constraints) == 0 {
 		return nil, err
 	}
+	// dfy:  返回在该 pod namespace 下，匹配该 Pod 的 service、rc控制器、rs 控制器和 statefulset 的标签选择器 Selector
 	selector := helper.DefaultSelector(p, pl.services, pl.replicationCtrls, pl.replicaSets, pl.statefulSets)
+	// dfy: 这里意思是，单 Pod 就不应用 默认 constraints 了吗？
+	// dfy: 只有 Pod 有副本控制器时，才能获得筛选改 Pod 的 selector，因此才可以配置 constraints
 	if selector.Empty() {
 		return nil, nil
 	}
