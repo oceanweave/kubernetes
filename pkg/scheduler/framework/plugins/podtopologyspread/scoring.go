@@ -58,22 +58,28 @@ func (s *preScoreState) Clone() framework.StateData {
 // 3) s.TopologyNormalizingWeight: The weight to be given to each constraint based on the number of values in a topology.
 func (pl *PodTopologySpread) initPreScoreState(s *preScoreState, pod *v1.Pod, filteredNodes []*v1.Node) error {
 	var err error
+	// dfy: 1. 有配置 constraints
 	if len(pod.Spec.TopologySpreadConstraints) > 0 {
+		// dfy: 寻找 action 为 v1.ScheduleAnyway 的 constraints
 		s.Constraints, err = filterTopologySpreadConstraints(pod.Spec.TopologySpreadConstraints, v1.ScheduleAnyway)
 		if err != nil {
 			return fmt.Errorf("obtaining pod's soft topology spread constraints: %v", err)
 		}
 	} else {
+		// dfy: 2. 采用 默认 constraints
 		s.Constraints, err = pl.defaultConstraints(pod, v1.ScheduleAnyway)
 		if err != nil {
 			return fmt.Errorf("setting default soft topology spread constraints: %v", err)
 		}
 	}
+	// dfy: 3. 没有配置或默认 constraints，直接返回
 	if len(s.Constraints) == 0 {
 		return nil
 	}
+	// dfy: topoSize 是记录 每个 Constraints 的 topologyKey 有多少个 topologyValue
 	topoSize := make([]int, len(s.Constraints))
 	for _, node := range filteredNodes {
+		// dfy: 该 Node 不具有所有 constraints 规定的 topologyKey，记录此 node 到 IgnoredNodes 数组中
 		if !nodeLabelsMatchSpreadConstraints(node.Labels, s.Constraints) {
 			// Nodes which don't have all required topologyKeys present are ignored
 			// when scoring later.
@@ -82,20 +88,24 @@ func (pl *PodTopologySpread) initPreScoreState(s *preScoreState, pod *v1.Pod, fi
 		}
 		for i, constraint := range s.Constraints {
 			// per-node counts are calculated during Score.
+			// dfy: 此处没有计算 "kubernetes.io/hostname" topology 的 constraints，在 Score 中进行计算
 			if constraint.TopologyKey == v1.LabelHostname {
 				continue
 			}
 			pair := topologyPair{key: constraint.TopologyKey, value: node.Labels[constraint.TopologyKey]}
 			if s.TopologyPairToPodCounts[pair] == nil {
 				s.TopologyPairToPodCounts[pair] = new(int64)
+				// dfy: 记录 topologyKey 有多少个 topologyValue
 				topoSize[i]++
 			}
 		}
 	}
 
+	// dfy: 计算各个 constraints 的正则化权重
 	s.TopologyNormalizingWeight = make([]float64, len(s.Constraints))
 	for i, c := range s.Constraints {
 		sz := topoSize[i]
+		// dfy: 此处需要留意，因为上面也没有统计 v1.LabelHostname 的 topoSize[i]，所以此处使用 所有节点数-没有符合所有constraints的Node数
 		if c.TopologyKey == v1.LabelHostname {
 			sz = len(filteredNodes) - len(s.IgnoredNodes)
 		}
@@ -121,15 +131,20 @@ func (pl *PodTopologySpread) PreScore(
 		return nil
 	}
 
+	// dfy: 构建 preScoreState
 	state := &preScoreState{
-		IgnoredNodes:            sets.NewString(),
+		// dfy: 此处记录，没有符合所有 constraints selector 的 node 数量
+		IgnoredNodes: sets.NewString(),
+		// dfy: 目前 key 为所有 topologyKey 和 topologyValue 的组合， value 应该为 topologyPair 对应的 selector 在集群内  匹配的 Pod 数
 		TopologyPairToPodCounts: make(map[topologyPair]*int64),
 	}
+	// dfy: 初始化 PreScoreState 并计算了 各个 constraints 对应的 正则化权重
 	err = pl.initPreScoreState(state, pod, filteredNodes)
 	if err != nil {
 		return framework.NewStatus(framework.Error, fmt.Sprintf("error when calculating preScoreState: %v", err))
 	}
 
+	// dfy: 记录到 cycleState 中 用于传输
 	// return if incoming pod doesn't have soft topology spread Constraints.
 	if len(state.Constraints) == 0 {
 		cycleState.Write(preScoreStateKey, state)
@@ -144,6 +159,9 @@ func (pl *PodTopologySpread) PreScore(
 		}
 		// (1) `node` should satisfy incoming pod's NodeSelector/NodeAffinity
 		// (2) All topologyKeys need to be present in `node`
+		// dfy: 这里有两个要求
+		// 1. 此 node 要符合 Pod  的 NodeSelect 和 NodeAffinity 要求
+		// 2. 所有 constraints 的 topologyKey 都应在此 Node 的 label 中
 		if !pluginhelper.PodMatchesNodeSelectorAndAffinityTerms(pod, node) ||
 			!nodeLabelsMatchSpreadConstraints(node.Labels, state.Constraints) {
 			return
@@ -158,6 +176,7 @@ func (pl *PodTopologySpread) PreScore(
 			if tpCount == nil {
 				continue
 			}
+			// dfy: 计算该 node 上匹配 constraints selector 的 Pod 数量，并累计到该 node 对应的此 constraints 的 topologyPair
 			count := countPodsMatchSelector(nodeInfo.Pods, c.Selector, pod.Namespace)
 			atomic.AddInt64(tpCount, int64(count))
 		}
@@ -184,6 +203,7 @@ func (pl *PodTopologySpread) Score(ctx context.Context, cycleState *framework.Cy
 	}
 
 	// Return if the node is not qualified.
+	// dfy: IgnoredNodes 是没有具有所有 constraints topologyKey 的 node
 	if s.IgnoredNodes.Has(node.Name) {
 		return 0, nil
 	}
@@ -195,11 +215,13 @@ func (pl *PodTopologySpread) Score(ctx context.Context, cycleState *framework.Cy
 		if tpVal, ok := node.Labels[c.TopologyKey]; ok {
 			var cnt int64
 			if c.TopologyKey == v1.LabelHostname {
+				// dfy: 统计当前 node 上，被 constraints Selector 选中的 Pod 数量
 				cnt = int64(countPodsMatchSelector(nodeInfo.Pods, c.Selector, pod.Namespace))
 			} else {
 				pair := topologyPair{key: c.TopologyKey, value: tpVal}
 				cnt = *s.TopologyPairToPodCounts[pair]
 			}
+			// dfy: 计算当前节点得分
 			score += scoreForCount(cnt, c.MaxSkew, s.TopologyNormalizingWeight[i])
 		}
 	}
@@ -219,6 +241,7 @@ func (pl *PodTopologySpread) NormalizeScore(ctx context.Context, cycleState *fra
 	// Calculate <minScore> and <maxScore>
 	var minScore int64 = math.MaxInt64
 	var maxScore int64
+	// dfy: 统计所有 node 的得分，选出最低分和最高分
 	for _, score := range scores {
 		// it's mandatory to check if <score.Name> is present in m.IgnoredNodes
 		if s.IgnoredNodes.Has(score.Name) {
@@ -232,6 +255,7 @@ func (pl *PodTopologySpread) NormalizeScore(ctx context.Context, cycleState *fra
 		}
 	}
 
+	// dfy: 对所有节点的得分进行正则化处理
 	for i := range scores {
 		nodeInfo, err := pl.sharedLister.NodeInfos().Get(scores[i].Name)
 		if err != nil {

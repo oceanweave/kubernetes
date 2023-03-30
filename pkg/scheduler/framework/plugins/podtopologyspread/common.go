@@ -60,6 +60,7 @@ func (pl *PodTopologySpread) defaultConstraints(p *v1.Pod, action v1.Unsatisfiab
 }
 
 // nodeLabelsMatchSpreadConstraints checks if ALL topology keys in spread Constraints are present in node labels.
+// dfy: 判断 node label 是否具有【所有 constraints 规定的 topologyKey】
 func nodeLabelsMatchSpreadConstraints(nodeLabels map[string]string, constraints []topologySpreadConstraint) bool {
 	for _, c := range constraints {
 		if _, ok := nodeLabels[c.TopologyKey]; !ok {
@@ -69,6 +70,7 @@ func nodeLabelsMatchSpreadConstraints(nodeLabels map[string]string, constraints 
 	return true
 }
 
+// dfy: 寻找指定 action 的 constraints，将其 selector 进行转换，并拼接成 topologySpreadConstraint ，返回
 func filterTopologySpreadConstraints(constraints []v1.TopologySpreadConstraint, action v1.UnsatisfiableConstraintAction) ([]topologySpreadConstraint, error) {
 	var result []topologySpreadConstraint
 	for _, c := range constraints {

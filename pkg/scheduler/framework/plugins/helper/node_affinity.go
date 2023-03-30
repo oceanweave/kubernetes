@@ -27,6 +27,7 @@ import (
 // the requirements in both NodeAffinity and nodeSelector.
 func PodMatchesNodeSelectorAndAffinityTerms(pod *v1.Pod, node *v1.Node) bool {
 	// Check if node.Labels match pod.Spec.NodeSelector.
+	// dfy: 若 pod 有配置 nodeSelector, 判断当前 node 是否 match 上，没 match 返回 false
 	if len(pod.Spec.NodeSelector) > 0 {
 		selector := labels.SelectorFromSet(pod.Spec.NodeSelector)
 		if !selector.Matches(labels.Set(node.Labels)) {
@@ -42,6 +43,7 @@ func PodMatchesNodeSelectorAndAffinityTerms(pod *v1.Pod, node *v1.Node) bool {
 	// 6. non-nil empty NodeSelectorRequirement is not allowed
 	nodeAffinityMatches := true
 	affinity := pod.Spec.Affinity
+	// dfy: 若 pod 有配置Node亲和性，判断该 node 是否符合亲和性中的强制部分 RequiredDuringSchedulingIgnoredDuringExecution ，不符合 返回 false
 	if affinity != nil && affinity.NodeAffinity != nil {
 		nodeAffinity := affinity.NodeAffinity
 		// if no required NodeAffinity requirements, will do no-op, means select all nodes.
