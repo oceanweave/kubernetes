@@ -133,12 +133,13 @@ func (pl *PodTopologySpread) PreScore(
 
 	// dfy: 构建 preScoreState
 	state := &preScoreState{
-		// dfy: 此处记录，没有符合所有 constraints selector 的 node 数量
+		// dfy: 此处记录，没有符合所有 constraints selector 的 node
 		IgnoredNodes: sets.NewString(),
 		// dfy: 目前 key 为所有 topologyKey 和 topologyValue 的组合， value 应该为 topologyPair 对应的 selector 在集群内  匹配的 Pod 数
 		TopologyPairToPodCounts: make(map[topologyPair]*int64),
 	}
 	// dfy: 初始化 PreScoreState 并计算了 各个 constraints 对应的 正则化权重
+	// dfy: 此处考虑策略为 ScheduleAnyway 的 constraints
 	err = pl.initPreScoreState(state, pod, filteredNodes)
 	if err != nil {
 		return framework.NewStatus(framework.Error, fmt.Sprintf("error when calculating preScoreState: %v", err))

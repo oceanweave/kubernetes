@@ -160,6 +160,7 @@ func (s *preFilterState) updateWithPod(updatedPod, preemptorPod *v1.Pod, node *v
 
 // PreFilter invoked at the prefilter extension point.
 func (pl *PodTopologySpread) PreFilter(ctx context.Context, cycleState *framework.CycleState, pod *v1.Pod) *framework.Status {
+	// dfy: 此处只考虑策略为 DoNotSchedule 的 constraints
 	s, err := pl.calPreFilterState(pod)
 	if err != nil {
 		return framework.NewStatus(framework.Error, err.Error())
