@@ -63,8 +63,9 @@ var configDecoder = scheme.Codecs.UniversalDecoder()
 // frameworkImpl is the component responsible for initializing and running scheduler
 // plugins.
 type frameworkImpl struct {
-	registry              Registry
-	snapshotSharedLister  framework.SharedLister
+	registry             Registry
+	snapshotSharedLister framework.SharedLister
+	// dfy: Permit 添加的 waitTimeout Pod，超过这个时长，就会 rejected，也就是将 Pod 重新放回待调度队列
 	waitingPods           *waitingPodsMap
 	pluginNameToWeightMap map[string]int
 	// dfy: 存储着每个调度卡点  注册的  处理函数（如 filter卡点多种过滤函数，score卡点多种打分函数）
@@ -876,13 +877,16 @@ func (f *frameworkImpl) RunPermitPlugins(ctx context.Context, state *framework.C
 	pluginsWaitTime := make(map[string]time.Duration)
 	statusCode := framework.Success
 	for _, pl := range f.permitPlugins {
+		// dfy: 运行 Permit 插件
 		status, timeout := f.runPermitPlugin(ctx, pl, state, pod, nodeName)
 		if !status.IsSuccess() {
+			// dfy: 该 Pod 被 Permit 插件 拒绝，无法继续进行绑定
 			if status.IsUnschedulable() {
 				msg := fmt.Sprintf("rejected pod %q by permit plugin %q: %v", pod.Name, pl.Name(), status.Message())
 				klog.V(4).Infof(msg)
 				return framework.NewStatus(status.Code(), msg)
 			}
+			// dfy: 多个 Permit 插件，取最大的 maxTimeout 等待时间
 			if status.Code() == framework.Wait {
 				// Not allowed to be greater than maxTimeout.
 				if timeout > maxTimeout {
@@ -897,8 +901,10 @@ func (f *frameworkImpl) RunPermitPlugins(ctx context.Context, state *framework.C
 			}
 		}
 	}
+	// dfy:  若是 Wait 状态，创建个 waitingPod，若超过该 pod 的 WaitTime 就发送 rejected 信息
 	if statusCode == framework.Wait {
 		waitingPod := newWaitingPod(pod, pluginsWaitTime)
+		// dfy: 记录此 Pod
 		f.waitingPods.add(waitingPod)
 		msg := fmt.Sprintf("one or more plugins asked to wait and no plugin rejected pod %q", pod.Name)
 		klog.V(4).Infof(msg)

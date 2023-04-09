@@ -97,6 +97,9 @@ func newWaitingPod(pod *v1.Pod, pluginsMaxWaitTime map[string]time.Duration) *wa
 	defer wp.mu.Unlock()
 	for k, v := range pluginsMaxWaitTime {
 		plugin, waitTime := k, v
+		// dfy: 设置了最大等待时间 waitTime，若超过这个时长，就会向 wp.s  channel 中发送 rejected  信息
+		// dfy: time.AfterFunc 该函数返回一个 waitTime 时长的定时器
+		// dfy: https://blog.csdn.net/inthat/article/details/106993829
 		wp.pendingPlugins[plugin] = time.AfterFunc(waitTime, func() {
 			msg := fmt.Sprintf("rejected due to timeout after waiting %v at plugin %v",
 				waitTime, plugin)

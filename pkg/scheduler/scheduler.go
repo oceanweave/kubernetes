@@ -592,8 +592,17 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		return
 	}
 
+	// dfy:
+	// Permit 扩展用于阻止或者延迟 Pod 与节点的绑定。Permit 扩展可以做下面三件事中的一项：
+	// - approve（批准）：当所有的 permit 扩展都 approve 了 Pod 与节点的绑定，调度器将继续执行绑定过程
+	// - deny（拒绝）：如果任何一个 permit 扩展 deny 了 Pod 与节点的绑定，Pod 将被放回到待调度队列，此时将触发 Unreserve 扩展
+	// - wait（等待）：如果一个 permit 扩展返回了 wait，则 Pod 将保持在 permit 阶段，直到被其他扩展 approve，如果超时事件发生，wait 状态变成 deny，Pod 将被放回到待调度队列，此时将触发 Unreserve 扩展
+	// 原文链接：https://blog.csdn.net/qq_24433609/article/details/128855174
+
+	// dfy: 注意，wait 状态下,会创建个 waitingPod ，记录在 fameworkImpl 的 waitingPods           *waitingPodsMap 中
 	// Run "permit" plugins.
 	runPermitStatus := prof.RunPermitPlugins(schedulingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
+	// dfy: 不是 wait 或 success 状态，就说明 permit 执行未通过，进行预留资源清理
 	if runPermitStatus.Code() != framework.Wait && !runPermitStatus.IsSuccess() {
 		var reason string
 		if runPermitStatus.IsUnschedulable() {
@@ -604,10 +613,12 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			reason = SchedulerError
 		}
 		// One of the plugins returned status different than success or wait.
+		// dfy: 运行 UnReserve 释放预留资源
 		prof.RunReservePluginsUnreserve(schedulingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
 		if forgetErr := sched.Cache().ForgetPod(assumedPod); forgetErr != nil {
 			klog.Errorf("scheduler cache ForgetPod failed: %v", forgetErr)
 		}
+		// dfy: 记录一个 event 表明 pod 调度失败，同时更新 pod 信息和 nominated node name
 		sched.recordSchedulingFailure(prof, assumedPodInfo, runPermitStatus.AsError(), reason, "")
 		return
 	}
