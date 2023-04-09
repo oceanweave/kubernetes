@@ -376,8 +376,10 @@ func (cache *schedulerCache) AssumePod(pod *v1.Pod) error {
 		return err
 	}
 
+	// dfy: 对 cache 的操作，利用到了 锁
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
+	// dfy: pod 若在 cache 中，不能被 assumed
 	if _, ok := cache.podStates[key]; ok {
 		return fmt.Errorf("pod %v is in the cache, so can't be assumed", key)
 	}

@@ -815,6 +815,7 @@ func (f *frameworkImpl) RunReservePluginsReserve(ctx context.Context, state *fra
 	defer func() {
 		metrics.FrameworkExtensionPointDuration.WithLabelValues(reserve, status.Code().String(), f.profileName).Observe(metrics.SinceInSeconds(startTime))
 	}()
+	// dfy: 调用注册的 reserve 插件
 	for _, pl := range f.reservePlugins {
 		status = f.runReservePluginReserve(ctx, pl, state, pod, nodeName)
 		if !status.IsSuccess() {
@@ -831,6 +832,7 @@ func (f *frameworkImpl) runReservePluginReserve(ctx context.Context, pl framewor
 		return pl.Reserve(ctx, state, pod, nodeName)
 	}
 	startTime := time.Now()
+	// dfy: 跳转到不同调度插件编写 Reserve 函数，进行执行，还未细看各个调度插件实现的 Reserve 函数
 	status := pl.Reserve(ctx, state, pod, nodeName)
 	f.metricsRecorder.observePluginDurationAsync(reserve, pl.Name(), status, metrics.SinceInSeconds(startTime))
 	return status

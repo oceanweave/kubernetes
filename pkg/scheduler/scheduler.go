@@ -317,6 +317,7 @@ func (sched *Scheduler) Run(ctx context.Context) {
 
 // recordSchedulingFailure records an event for the pod that indicates the
 // pod has failed to schedule. Also, update the pod condition and nominated node name if set.
+// dfy: 记录一个 event 表明 pod 调度失败，同时更新 pod 信息和 nominated node name
 func (sched *Scheduler) recordSchedulingFailure(prof *profile.Profile, podInfo *framework.QueuedPodInfo, err error, reason string, nominatedNode string) {
 	sched.Error(podInfo, err)
 
@@ -373,13 +374,20 @@ func (sched *Scheduler) assume(assumed *v1.Pod, host string) error {
 	// in the background.
 	// If the binding fails, scheduler will release resources allocated to assumed pod
 	// immediately.
+	// dfy: 这里是乐观假设，假定 binding 操作会执行成功，并且在后台发送
+	//给 apiserver
+	// dfy: 如果 binding 失败，调度器会立即释放为该 assumed pod 分配的资源
 	assumed.Spec.NodeName = host
 
+	// dfy: 此处将 Pod 放入 cache 中，标记为 assumed 状态；若已经被标记了 assumed 状态，此处返回 error
 	if err := sched.SchedulerCache.AssumePod(assumed); err != nil {
 		klog.Errorf("scheduler cache AssumePod failed: %v", err)
 		return err
 	}
 	// if "assumed" is a nominated pod, we should remove it from internal cache
+	// dfy: 若 assumed 是个提名 pod，我们应该在 internal cache（中间缓存） 中移除它，实际上就是从 nominated 记录的列表信息中移除此 Pod
+	// dfy: 此处理解为 nominated 列表就是提名要调度的 Pod（只是信息的记录），现在将该 Pod 加入到了 assumed 列表（相当于马上要执行了真正的调度）
+	//      因此要移除 中间缓存 internal cache 中 nominated 列表记录的该 Pod 信息（避免之后被重复调度 绑定)
 	if sched.SchedulingQueue != nil {
 		sched.SchedulingQueue.DeleteNominatedPodIfExists(assumed)
 	}
@@ -516,6 +524,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 				} else {
 					klog.V(5).Infof("Status after running PostFilter plugins for pod %v/%v: %v", pod.Namespace, pod.Name, status)
 				}
+				// dfy: 为 Pod 寻找到合适的 node，因此为该 pod 指定 node，此时并未进行实际的调度
 				if status.IsSuccess() && result != nil {
 					nominatedNode = result.NominatedNodeName
 				}
@@ -531,15 +540,25 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			klog.ErrorS(err, "Error selecting node for pod", "pod", klog.KObj(pod))
 			metrics.PodScheduleError(prof.Name, metrics.SinceInSeconds(start))
 		}
+		// dfy: 将上面指定的 nominatedNode 更新到 pod 信息中，此时该 Pod 也并未完成实际的调度
 		sched.recordSchedulingFailure(prof, podInfo, err, v1.PodReasonUnschedulable, nominatedNode)
+		// dfy: 之后返回等待进行抢占，完成 pod 实际的调度
 		return
 	}
+
+	// dfy: 若找到推荐的 host，就继续执行下面的逻辑
 	metrics.SchedulingAlgorithmLatency.Observe(metrics.SinceInSeconds(start))
 	// Tell the cache to assume that a pod now is running on a given node, even though it hasn't been bound yet.
 	// This allows us to keep scheduling without waiting on binding to occur.
+	// dfy: 告诉 cache 假定该 pod 运行在给定的 node上，即使还未完成 bound。这允许我们不需要等待 binding 的发生，仍然可以继续调度
+	// dfy: 此处应该说明的是 异步绑定binding，因此不影响接下来的继续调度；所以接下来应该就是告诉 cache 和执行 binding
 	assumedPodInfo := podInfo.DeepCopy()
 	assumedPod := assumedPodInfo.Pod
 	// assume modifies `assumedPod` by setting NodeName=scheduleResult.SuggestedHost
+	// dfy: 此处就是将 assumedPod 的 NodeName 字段设置为 上面建议的 host
+	// dfy: 此处做了一些操作：
+	// 1. 填充 Pod 的 NodeName 字段，记录到 assumed 列表中（若已经在 assumed 列表中，此处报错）
+	// 2. 若该 Pod 在 nominated 列表中，将其移除（nominated 列表相当于中间缓存记录）
 	err = sched.assume(assumedPod, scheduleResult.SuggestedHost)
 	if err != nil {
 		metrics.PodScheduleError(prof.Name, metrics.SinceInSeconds(start))
@@ -553,9 +572,18 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	}
 
 	// Run the Reserve method of reserve plugins.
+	// dfy:
+	// https://blog.csdn.net/qq_24433609/article/details/128855174#comments_25689343
+	// Reserve 是一个通知性质的扩展点，有状态的插件可以使用该扩展点来获得节点上为 Pod 预留的资源，
+	// 该事件发生在调度器将 Pod 绑定到节点之前，目的是避免调度器在等待 Pod 与节点绑定的过程中调度新的 Pod 到节点上时，发生实际使用资源超出可用资源的情况。
+	//（因为绑定 Pod 到节点上是异步发生的）。这是调度过程的最后一个步骤，Pod 进入 reserved 状态以后，要么在绑定失败时触发 Unreserve 扩展，
+	// 要么在绑定成功时，由 Post-bind 扩展结束绑定过程。
+
+	// dfy: 此处执行所有插件注册的 Reserve 函数，还未细看各个插件实现的 Reserve 函数
 	if sts := prof.RunReservePluginsReserve(schedulingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost); !sts.IsSuccess() {
 		metrics.PodScheduleError(prof.Name, metrics.SinceInSeconds(start))
 		// trigger un-reserve to clean up state associated with the reserved Pod
+		// dfy: 未成功 Reserve 就触发 un-Reserve 的执行，来清理相关联的 状态信息
 		prof.RunReservePluginsUnreserve(schedulingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
 		if forgetErr := sched.Cache().ForgetPod(assumedPod); forgetErr != nil {
 			klog.Errorf("scheduler cache ForgetPod failed: %v", forgetErr)
