@@ -925,6 +925,7 @@ func (f *frameworkImpl) runPermitPlugin(ctx context.Context, pl framework.Permit
 
 // WaitOnPermit will block, if the pod is a waiting pod, until the waiting pod is rejected or allowed.
 func (f *frameworkImpl) WaitOnPermit(ctx context.Context, pod *v1.Pod) (status *framework.Status) {
+	// dfy: 获取 Permit 添加的 waitingPod
 	waitingPod := f.waitingPods.get(pod.UID)
 	if waitingPod == nil {
 		return nil
@@ -933,9 +934,11 @@ func (f *frameworkImpl) WaitOnPermit(ctx context.Context, pod *v1.Pod) (status *
 	klog.V(4).Infof("pod %q waiting on permit", pod.Name)
 
 	startTime := time.Now()
+	// dfy: 等待 Pod 执行，有两种结果：1.Permit 插件正常执行成功 2. 发生超时 timeout 时间，返回错误，rejected，之后需要重新放回到待调度队列
 	s := <-waitingPod.s
 	metrics.PermitWaitDuration.WithLabelValues(s.Code().String()).Observe(metrics.SinceInSeconds(startTime))
 
+	// dfy: 未成功，timeout，报错
 	if !s.IsSuccess() {
 		if s.IsUnschedulable() {
 			msg := fmt.Sprintf("pod %q rejected while waiting on permit: %v", pod.Name, s.Message())

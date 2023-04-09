@@ -408,6 +408,7 @@ func (cache *schedulerCache) finishBinding(pod *v1.Pod, now time.Time) error {
 	defer cache.mu.RUnlock()
 
 	klog.V(5).Infof("Finished binding for pod %v. Can be expired.", key)
+	// dfy: 完成了 Pod 的绑定，更新 cache 中 Pod 的状态信息
 	currState, ok := cache.podStates[key]
 	if ok && cache.assumedPods[key] {
 		dl := now.Add(cache.ttl)

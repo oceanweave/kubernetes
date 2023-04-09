@@ -318,6 +318,7 @@ func (sched *Scheduler) Run(ctx context.Context) {
 // recordSchedulingFailure records an event for the pod that indicates the
 // pod has failed to schedule. Also, update the pod condition and nominated node name if set.
 // dfy: 记录一个 event 表明 pod 调度失败，同时更新 pod 信息和 nominated node name
+// dfy: 同时将 Pod 放回到待调度队列？
 func (sched *Scheduler) recordSchedulingFailure(prof *profile.Profile, podInfo *framework.QueuedPodInfo, err error, reason string, nominatedNode string) {
 	sched.Error(podInfo, err)
 
@@ -325,6 +326,7 @@ func (sched *Scheduler) recordSchedulingFailure(prof *profile.Profile, podInfo *
 	// this, there would be a race condition between the next scheduling cycle
 	// and the time the scheduler receives a Pod Update for the nominated pod.
 	// Here we check for nil only for tests.
+	// dfy: 将(指定 node 的 pod）重新放回到待调度队列？ 此处这样操作避免了竞争条件
 	if sched.SchedulingQueue != nil {
 		sched.SchedulingQueue.AddNominatedPod(podInfo.Pod, nominatedNode)
 	}
@@ -404,10 +406,13 @@ func (sched *Scheduler) bind(ctx context.Context, prof *profile.Profile, assumed
 		sched.finishBinding(prof, assumed, targetNode, start, err)
 	}()
 
+	// dfy: 额外的 extender 绑定处理，不太清除此处作用，需要再看看
+	// todo: 需要再看看
 	bound, err := sched.extendersBinding(assumed, targetNode)
 	if bound {
 		return err
 	}
+	// dfy: 执行 Bind 插件
 	bindStatus := prof.RunBindPlugins(ctx, state, assumed, targetNode)
 	if bindStatus.IsSuccess() {
 		return nil
@@ -433,6 +438,7 @@ func (sched *Scheduler) extendersBinding(pod *v1.Pod, node string) (bool, error)
 }
 
 func (sched *Scheduler) finishBinding(prof *profile.Profile, assumed *v1.Pod, targetNode string, start time.Time, err error) {
+	// dfy: 完成了 Pod 的绑定，更新 cache 中记录的 state 状态信息
 	if finErr := sched.SchedulerCache.FinishBinding(assumed); finErr != nil {
 		klog.Errorf("scheduler cache FinishBinding failed: %v", finErr)
 	}
@@ -619,6 +625,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			klog.Errorf("scheduler cache ForgetPod failed: %v", forgetErr)
 		}
 		// dfy: 记录一个 event 表明 pod 调度失败，同时更新 pod 信息和 nominated node name
+		// dfy: 同时将该 Pod 放回到待调度队列，此处并未为该 Pod 指定 node
 		sched.recordSchedulingFailure(prof, assumedPodInfo, runPermitStatus.AsError(), reason, "")
 		return
 	}
@@ -630,6 +637,9 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		metrics.SchedulerGoroutines.WithLabelValues("binding").Inc()
 		defer metrics.SchedulerGoroutines.WithLabelValues("binding").Dec()
 
+		// dfy: 等待 Permit 插件添加的 waitingPod 执行，两种结果
+		// 1. 正常执行成功
+		// 2. 超时还未执行完成，发生 timeout 事件
 		waitOnPermitStatus := prof.WaitOnPermit(bindingCycleCtx, assumedPod)
 		if !waitOnPermitStatus.IsSuccess() {
 			var reason string
@@ -641,15 +651,23 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 				reason = SchedulerError
 			}
 			// trigger un-reserve plugins to clean up state associated with the reserved Pod
+			// dfy: UnReserve 释放预留资源
 			prof.RunReservePluginsUnreserve(bindingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
+			// dfy: 此处绑定失败，因此从 缓存 Cache 中清除此 Pod 信息
 			if forgetErr := sched.Cache().ForgetPod(assumedPod); forgetErr != nil {
 				klog.Errorf("scheduler cache ForgetPod failed: %v", forgetErr)
 			}
+			// dfy: 记录一个 event 表明 pod 调度失败，同时更新 pod 信息和 nominated node name
+			// dfy: 同时将该 Pod 放回到待调度队列，此处并未为该 Pod 指定 node
 			sched.recordSchedulingFailure(prof, assumedPodInfo, waitOnPermitStatus.AsError(), reason, "")
 			return
 		}
 
 		// Run "prebind" plugins.
+		// dfy:
+		// Pre-bind 扩展用于在 Pod 绑定之前执行某些逻辑
+		// 例如，pre-bind 扩展可以将一个基于网络的数据卷挂载到节点上，以便 Pod 可以使用。
+		// 如果任何一个 pre-bind 扩展返回错误，Pod 将被放回到待调度队列，此时将触发 Unreserve 扩展。
 		preBindStatus := prof.RunPreBindPlugins(bindingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
 		if !preBindStatus.IsSuccess() {
 			metrics.PodScheduleError(prof.Name, metrics.SinceInSeconds(start))
@@ -658,10 +676,19 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			if forgetErr := sched.Cache().ForgetPod(assumedPod); forgetErr != nil {
 				klog.Errorf("scheduler cache ForgetPod failed: %v", forgetErr)
 			}
+			// dfy: 记录一个 event 表明 pod 调度失败，同时更新 pod 信息和 nominated node name
+			// dfy: 同时将该 Pod 放回到待调度队列，此处并未为该 Pod 指定 node
 			sched.recordSchedulingFailure(prof, assumedPodInfo, preBindStatus.AsError(), SchedulerError, "")
 			return
 		}
 
+		// dfy:
+		// Bind 扩展用于将 Pod 绑定到节点上：
+		// - 只有所有的 pre-bind 扩展都成功执行了，bind 扩展才会执行
+		// - 调度框架按照 bind 扩展注册的顺序逐个调用 bind 扩展
+		// - 具体某个 bind 扩展可以选择处理或者不处理该 Pod
+		// - 如果某个 bind 扩展处理了该 Pod 与节点的绑定，余下的 bind 扩展将被忽略
+		// 原文链接：https://blog.csdn.net/qq_24433609/article/details/128855174
 		err := sched.bind(bindingCycleCtx, prof, assumedPod, scheduleResult.SuggestedHost, state)
 		if err != nil {
 			metrics.PodScheduleError(prof.Name, metrics.SinceInSeconds(start))
@@ -670,6 +697,8 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			if err := sched.SchedulerCache.ForgetPod(assumedPod); err != nil {
 				klog.Errorf("scheduler cache ForgetPod failed: %v", err)
 			}
+			// dfy: 记录一个 event 表明 pod 调度失败，同时更新 pod 信息和 nominated node name
+			// dfy: 同时将该 Pod 放回到待调度队列，此处并未为该 Pod 指定 node
 			sched.recordSchedulingFailure(prof, assumedPodInfo, fmt.Errorf("Binding rejected: %v", err), SchedulerError, "")
 		} else {
 			// Calculating nodeResourceString can be heavy. Avoid it if klog verbosity is below 2.
@@ -681,6 +710,10 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			metrics.PodSchedulingDuration.WithLabelValues(getAttemptsLabel(podInfo)).Observe(metrics.SinceInSeconds(podInfo.InitialAttemptTimestamp))
 
 			// Run "postbind" plugins.
+			// dfy:
+			// Post-bind 是一个通知性质的扩展：
+			// - Post-bind 扩展在 Pod 成功绑定到节点上之后被动调用
+			// - Post-bind 扩展是绑定过程的最后一个步骤，可以用来执行资源清理的动作
 			prof.RunPostBindPlugins(bindingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
 		}
 	}()
