@@ -681,14 +681,17 @@ func (nc *Controller) doNoExecuteTaintingPass() {
 				// retry in 50 millisecond
 				return false, 50 * time.Millisecond
 			}
+			// dfy: 获取节点状态
 			_, condition := nodeutil.GetNodeCondition(&node.Status, v1.NodeReady)
 			// Because we want to mimic NodeStatus.Condition["Ready"] we make "unreachable" and "not ready" taints mutually exclusive.
 			taintToAdd := v1.Taint{}
 			oppositeTaint := v1.Taint{}
 			switch condition.Status {
+			// dfy: not ready taint
 			case v1.ConditionFalse:
 				taintToAdd = *NotReadyTaintTemplate
 				oppositeTaint = *UnreachableTaintTemplate
+				// dfy: unreachable taint
 			case v1.ConditionUnknown:
 				taintToAdd = *UnreachableTaintTemplate
 				oppositeTaint = *NotReadyTaintTemplate
@@ -698,6 +701,7 @@ func (nc *Controller) doNoExecuteTaintingPass() {
 				return true, 0
 			}
 
+			// dfy: 更新节点的 taint
 			result := nodeutil.SwapNodeControllerTaint(nc.kubeClient, []*v1.Taint{&taintToAdd}, []*v1.Taint{&oppositeTaint}, node)
 			if result {
 				//count the evictionsNumber
@@ -723,11 +727,13 @@ func (nc *Controller) doEvictionPass() {
 				klog.Warningf("Failed to get Node %v from the nodeLister: %v", value.Value, err)
 			}
 			nodeUID, _ := value.UID.(string)
+			// dfy: 获得分配到该节点上的 Pod
 			pods, err := nc.getPodsAssignedToNode(value.Value)
 			if err != nil {
 				utilruntime.HandleError(fmt.Errorf("unable to list pods from node %q: %v", value.Value, err))
 				return false, 0
 			}
+			// dfy: 删除 Pod
 			remaining, err := nodeutil.DeletePods(nc.kubeClient, pods, nc.recorder, value.Value, nodeUID, nc.daemonSetStore)
 			if err != nil {
 				// We are not setting eviction status here.
@@ -759,24 +765,35 @@ func (nc *Controller) doEvictionPass() {
 func (nc *Controller) monitorNodeHealth() error {
 	// We are listing nodes from local cache as we can tolerate some small delays
 	// comparing to state from etcd and there is eventual consistency anyway.
+	// dfy: 上面说的是，从本地缓存监听 node 状态，对比 etcd 的状态有短暂的延迟，不过可以接收，并且最终会保持一致的
 	nodes, err := nc.nodeLister.List(labels.Everything())
 	if err != nil {
 		return err
 	}
+	// dfy: 将 node 分为了三类
+	//   1. added: the nodes that in 'allNodes', but not in 'knownNodeSet'
+	//   2. deleted: the nodes that in 'knownNodeSet', but not in 'allNodes'
+	//   3. newZoneRepresentatives: the nodes that in both 'knownNodeSet' and 'allNodes', but no zone states
 	added, deleted, newZoneRepresentatives := nc.classifyNodes(nodes)
 
+	// dfy: 为这三类 node 添加 podEvictor （pod驱逐器？）
 	for i := range newZoneRepresentatives {
+		// dfy: zonePodEvictor 负责将 pod 从无响应的节点驱逐出去
+		// dfy: zoneNoExecuteTainter 负责为 node 打上污点 taint（是给 node 打上 不可执行的 taint？）
 		nc.addPodEvictorForNewZone(newZoneRepresentatives[i])
 	}
 
 	for i := range added {
 		klog.V(1).Infof("Controller observed a new Node: %#v", added[i].Name)
 		nodeutil.RecordNodeEvent(nc.recorder, added[i].Name, string(added[i].UID), v1.EventTypeNormal, "RegisteredNode", fmt.Sprintf("Registered Node %v in Controller", added[i].Name))
+		// dfy: 将 node 添加到  knownNodeSet 中
 		nc.knownNodeSet[added[i].Name] = added[i]
 		nc.addPodEvictorForNewZone(added[i])
 		if nc.runTaintManager {
+			// dfy: 移除 node 的 unreach taint 和 notReady taint，并从 zoneNoExecuteTainter 移除该 node
 			nc.markNodeAsReachable(added[i])
 		} else {
+			// dfy: 从 zonePodEvictor 删除该 node
 			nc.cancelPodEviction(added[i])
 		}
 	}
@@ -794,6 +811,7 @@ func (nc *Controller) monitorNodeHealth() error {
 		var currentReadyCondition *v1.NodeCondition
 		node := nodes[i].DeepCopy()
 		if err := wait.PollImmediate(retrySleepTime, retrySleepTime*scheduler.NodeHealthUpdateRetry, func() (bool, error) {
+			// dfy: 更新 node 的健康状态
 			gracePeriod, observedReadyCondition, currentReadyCondition, err = nc.tryUpdateNodeHealth(node)
 			if err == nil {
 				return true, nil
@@ -817,6 +835,7 @@ func (nc *Controller) monitorNodeHealth() error {
 		}
 
 		if currentReadyCondition != nil {
+			// dfy: 获取指定节点上的 pod
 			pods, err := nc.getPodsAssignedToNode(node.Name)
 			if err != nil {
 				utilruntime.HandleError(fmt.Errorf("unable to list pods of node %v: %v", node.Name, err))
@@ -828,9 +847,12 @@ func (nc *Controller) monitorNodeHealth() error {
 				}
 				continue
 			}
+			// dfy: 若 runTaintManager 为 true ，
 			if nc.runTaintManager {
+				// 重点  打 Taint 方式驱逐
 				nc.processTaintBaseEviction(node, &observedReadyCondition)
 			} else {
+				// 重点  不打 Taint 方式驱逐
 				if err := nc.processNoTaintBaseEviction(node, &observedReadyCondition, gracePeriod, pods); err != nil {
 					utilruntime.HandleError(fmt.Errorf("unable to evict all pods from node %v: %v; queuing for retry", node.Name, err))
 				}
@@ -838,11 +860,12 @@ func (nc *Controller) monitorNodeHealth() error {
 
 			_, needsRetry := nc.nodesToRetry.Load(node.Name)
 			switch {
+			// dfy: 就记录个 event？
 			case currentReadyCondition.Status != v1.ConditionTrue && observedReadyCondition.Status == v1.ConditionTrue:
 				// Report node event only once when status changed.
 				nodeutil.RecordNodeStatusChange(nc.recorder, node, "NodeNotReady")
-				fallthrough
-			case needsRetry && observedReadyCondition.Status != v1.ConditionTrue:
+				fallthrough // 这个是什么意思？
+			case needsRetry && observedReadyCondition.Status != v1.ConditionTrue: // dfy: 二次尝试？ 标记 pod not ready？
 				if err = nodeutil.MarkPodsNotReady(nc.kubeClient, nc.recorder, pods, node.Name); err != nil {
 					utilruntime.HandleError(fmt.Errorf("unable to mark all pods NotReady on node %v: %v; queuing for retry", node.Name, err))
 					nc.nodesToRetry.Store(node.Name, struct{}{})
@@ -852,31 +875,35 @@ func (nc *Controller) monitorNodeHealth() error {
 		}
 		nc.nodesToRetry.Delete(node.Name)
 	}
+	// dfy: 解决冲突？
 	nc.handleDisruption(zoneToNodeConditions, nodes)
 
 	return nil
 }
 
+// dfy: 重点
 func (nc *Controller) processTaintBaseEviction(node *v1.Node, observedReadyCondition *v1.NodeCondition) {
 	decisionTimestamp := nc.now()
 	// Check eviction timeout against decisionTimestamp
 	switch observedReadyCondition.Status {
 	case v1.ConditionFalse:
 		// We want to update the taint straight away if Node is already tainted with the UnreachableTaint
-		if taintutils.TaintExists(node.Spec.Taints, UnreachableTaintTemplate) {
+		// dfy: 如果 Node 已经被 UnreachableTaint 污染，我们希望立即更新污染
+		if taintutils.TaintExists(node.Spec.Taints, UnreachableTaintTemplate) { // 具有 UnreachableTaint 就打上 NotReadyTaint, 并立即更新
 			taintToAdd := *NotReadyTaintTemplate
+			// dfy: 立即更新 taints
 			if !nodeutil.SwapNodeControllerTaint(nc.kubeClient, []*v1.Taint{&taintToAdd}, []*v1.Taint{UnreachableTaintTemplate}, node) {
 				klog.Errorf("Failed to instantly swap UnreachableTaint to NotReadyTaint. Will try again in the next cycle.")
 			}
-		} else if nc.markNodeForTainting(node, v1.ConditionFalse) {
+		} else if nc.markNodeForTainting(node, v1.ConditionFalse) { // dfy: 若是第一次，那么就打上 NotReady 或 UnReach taint
 			klog.V(2).Infof("Node %v is NotReady as of %v. Adding it to the Taint queue.",
 				node.Name,
 				decisionTimestamp,
 			)
 		}
-	case v1.ConditionUnknown:
+	case v1.ConditionUnknown: // 类似上面逻辑
 		// We want to update the taint straight away if Node is already tainted with the UnreachableTaint
-		if taintutils.TaintExists(node.Spec.Taints, NotReadyTaintTemplate) {
+		if taintutils.TaintExists(node.Spec.Taints, NotReadyTaintTemplate) { // 具有 NotReadyTaint 就打上 UnreachableTaint, 并立即更新
 			taintToAdd := *UnreachableTaintTemplate
 			if !nodeutil.SwapNodeControllerTaint(nc.kubeClient, []*v1.Taint{&taintToAdd}, []*v1.Taint{NotReadyTaintTemplate}, node) {
 				klog.Errorf("Failed to instantly swap NotReadyTaint to UnreachableTaint. Will try again in the next cycle.")
@@ -907,8 +934,9 @@ func (nc *Controller) processNoTaintBaseEviction(node *v1.Node, observedReadyCon
 	// Check eviction timeout against decisionTimestamp
 	switch observedReadyCondition.Status {
 	case v1.ConditionFalse:
+		// dfy: 在 readyTransitionTimestamp + podEvictionTimeout 时间后，驱逐该 node 上的 pod
 		if decisionTimestamp.After(nodeHealthData.readyTransitionTimestamp.Add(nc.podEvictionTimeout)) {
-			enqueued, err := nc.evictPods(node, pods)
+			enqueued, err := nc.evictPods(node, pods) // dfy: 驱逐 pod 逻辑，待看
 			if err != nil {
 				return err
 			}
@@ -921,7 +949,7 @@ func (nc *Controller) processNoTaintBaseEviction(node *v1.Node, observedReadyCon
 				)
 			}
 		}
-	case v1.ConditionUnknown:
+	case v1.ConditionUnknown: // dfy: 逻辑与上面类似
 		if decisionTimestamp.After(nodeHealthData.probeTimestamp.Add(nc.podEvictionTimeout)) {
 			enqueued, err := nc.evictPods(node, pods)
 			if err != nil {
@@ -993,11 +1021,13 @@ func (nc *Controller) tryUpdateNodeHealth(node *v1.Node) (time.Duration, v1.Node
 
 	var gracePeriod time.Duration
 	var observedReadyCondition v1.NodeCondition
+	// dfy: 判断当前这个 node 是否具有 Ready  condition，一个 node 可以有多中 condition  如 MemoryPressure  DiskPressure Ready 等
 	_, currentReadyCondition := nodeutil.GetNodeCondition(&node.Status, v1.NodeReady)
 	if currentReadyCondition == nil {
 		// If ready condition is nil, then kubelet (or nodecontroller) never posted node status.
 		// A fake ready condition is created, where LastHeartbeatTime and LastTransitionTime is set
 		// to node.CreationTimestamp to avoid handle the corner case.
+		// 若 ready condition 为 nil，说明 kubelet 从未上报过状态，此处创建个假的 Ready condition
 		observedReadyCondition = v1.NodeCondition{
 			Type:               v1.NodeReady,
 			Status:             v1.ConditionUnknown,
@@ -1107,7 +1137,9 @@ func (nc *Controller) tryUpdateNodeHealth(node *v1.Node) (time.Duration, v1.Node
 		}
 
 		nowTimestamp := nc.now()
+		// dfy: 寻找 node 是否有上面几个异常状态
 		for _, nodeConditionType := range nodeConditionTypes {
+			// dfy: 具有异常状态，就进行记录
 			_, currentCondition := nodeutil.GetNodeCondition(&node.Status, nodeConditionType)
 			if currentCondition == nil {
 				klog.V(2).Infof("Condition %v of node %v was never updated by kubelet", nodeConditionType, node.Name)
@@ -1415,12 +1447,16 @@ func (nc *Controller) addPodEvictorForNewZone(node *v1.Node) {
 	defer nc.evictorLock.Unlock()
 	zone := utilnode.GetZoneKey(node)
 	if _, found := nc.zoneStates[zone]; !found {
+		// dfy: 没有找到 zone value，设置为 Initial
 		nc.zoneStates[zone] = stateInitial
+		// dfy: 没有 TaintManager，创建一个 限速队列，不太清楚有什么作用？？？
 		if !nc.runTaintManager {
+			// dfy: zonePodEvictor 负责将 pod 从无响应的节点驱逐出去
 			nc.zonePodEvictor[zone] =
 				scheduler.NewRateLimitedTimedQueue(
 					flowcontrol.NewTokenBucketRateLimiter(nc.evictionLimiterQPS, scheduler.EvictionRateLimiterBurst))
 		} else {
+			// dfy: zoneNoExecuteTainter 负责为 node 打上污点 taint
 			nc.zoneNoExecuteTainter[zone] =
 				scheduler.NewRateLimitedTimedQueue(
 					flowcontrol.NewTokenBucketRateLimiter(nc.evictionLimiterQPS, scheduler.EvictionRateLimiterBurst))
@@ -1433,6 +1469,7 @@ func (nc *Controller) addPodEvictorForNewZone(node *v1.Node) {
 
 // cancelPodEviction removes any queued evictions, typically because the node is available again. It
 // returns true if an eviction was queued.
+// cancelPodEviction 删除任何排队的驱逐，通常是因为节点再次可用。如果驱逐已排队，则它返回 true。
 func (nc *Controller) cancelPodEviction(node *v1.Node) bool {
 	zone := utilnode.GetZoneKey(node)
 	nc.evictorLock.Lock()
@@ -1441,6 +1478,7 @@ func (nc *Controller) cancelPodEviction(node *v1.Node) bool {
 		klog.V(2).Infof("node %v was unregistered in the meantime - skipping setting status", node.Name)
 	}
 	wasDeleting := nc.zonePodEvictor[zone].Remove(node.Name)
+	// dfy: 节点可用？ 删除 pod驱逐者 成功？
 	if wasDeleting {
 		klog.V(2).Infof("Cancelling pod Eviction on Node: %v", node.Name)
 		return true
@@ -1493,16 +1531,19 @@ func (nc *Controller) markNodeForTainting(node *v1.Node, status v1.ConditionStat
 func (nc *Controller) markNodeAsReachable(node *v1.Node) (bool, error) {
 	nc.evictorLock.Lock()
 	defer nc.evictorLock.Unlock()
+	// dfy: 移除 不可达 taint
 	err := controller.RemoveTaintOffNode(nc.kubeClient, node.Name, node, UnreachableTaintTemplate)
 	if err != nil {
 		klog.Errorf("Failed to remove taint from node %v: %v", node.Name, err)
 		return false, err
 	}
+	// dfy: 移除 notReady taint
 	err = controller.RemoveTaintOffNode(nc.kubeClient, node.Name, node, NotReadyTaintTemplate)
 	if err != nil {
 		klog.Errorf("Failed to remove taint from node %v: %v", node.Name, err)
 		return false, err
 	}
+	// dfy： 从 zoneNoExecuteTainter 记录中移除该 node
 	return nc.zoneNoExecuteTainter[utilnode.GetZoneKey(node)].Remove(node.Name), nil
 }
 

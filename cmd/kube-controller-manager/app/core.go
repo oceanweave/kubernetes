@@ -203,6 +203,7 @@ func startNodeLifecycleController(ctx ControllerContext) (http.Handler, bool, er
 		ctx.ComponentConfig.NodeLifecycleController.NodeStartupGracePeriod.Duration,
 		ctx.ComponentConfig.NodeLifecycleController.NodeMonitorGracePeriod.Duration,
 		ctx.ComponentConfig.NodeLifecycleController.PodEvictionTimeout.Duration,
+		// dfy: 用于配置节点的驱逐策略
 		ctx.ComponentConfig.NodeLifecycleController.NodeEvictionRate,
 		ctx.ComponentConfig.NodeLifecycleController.SecondaryNodeEvictionRate,
 		ctx.ComponentConfig.NodeLifecycleController.LargeClusterSizeThreshold,

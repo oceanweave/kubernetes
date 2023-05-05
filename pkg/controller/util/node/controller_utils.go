@@ -196,6 +196,7 @@ func SwapNodeControllerTaint(kubeClient clientset.Interface, taintsToAdd, taints
 		taintToAdd.TimeAdded = &now
 	}
 
+	// dfy: 立即更新 taints
 	err := controller.AddOrUpdateTaintOnNode(kubeClient, node.Name, taintsToAdd...)
 	if err != nil {
 		utilruntime.HandleError(
@@ -208,6 +209,7 @@ func SwapNodeControllerTaint(kubeClient clientset.Interface, taintsToAdd, taints
 	}
 	klog.V(4).Infof("Added %+v Taint to Node %v", taintsToAdd, node.Name)
 
+	// dfy: 立即更新 taints
 	err = controller.RemoveTaintOffNode(kubeClient, node.Name, node, taintsToRemove...)
 	if err != nil {
 		utilruntime.HandleError(
@@ -293,6 +295,8 @@ func GetNodeCondition(status *v1.NodeStatus, conditionType v1.NodeConditionType)
 	if status == nil {
 		return -1, nil
 	}
+	// dfy: 一个 node 可能会有多种 Conditions，比如 Ready  或 MemoryPressure  DiskPressure 等
+	// dfy: 此处就是 判断 该 node 是否具有我们指定的 conditionType 状态
 	for i := range status.Conditions {
 		if status.Conditions[i].Type == conditionType {
 			return i, &status.Conditions[i]
