@@ -246,6 +246,7 @@ func (s *KubeControllerManagerOptions) Flags(allControllers []string, disabledBy
 	s.JobController.AddFlags(fss.FlagSet("job controller"))
 	s.NamespaceController.AddFlags(fss.FlagSet("namespace controller"))
 	s.NodeIPAMController.AddFlags(fss.FlagSet("nodeipam controller"))
+	// dfy: 读取 NodeLifecycleController 的命令行配置信息
 	s.NodeLifecycleController.AddFlags(fss.FlagSet("nodelifecycle controller"))
 	s.PersistentVolumeBinderController.AddFlags(fss.FlagSet("persistentvolume-binder controller"))
 	s.PodGCController.AddFlags(fss.FlagSet("podgc controller"))
@@ -444,6 +445,7 @@ func (s KubeControllerManagerOptions) Config(allControllers []string, disabledBy
 		EventRecorder:        eventRecorder,
 		LeaderElectionClient: leaderElectionClient,
 	}
+	// dfy: 配置信息的初始化
 	if err := s.ApplyTo(c); err != nil {
 		return nil, err
 	}

@@ -352,6 +352,14 @@ type Controller struct {
 }
 
 // NewNodeLifecycleController returns a new taint controller.
+// dfy:
+// 核心逻辑如下：
+//（1）根据参数初始化Controller
+//（2）定义了pod的监听处理逻辑。都是先nc.podUpdated，如果enable-taint-manager=true,还会经过nc.taintManager.PodUpdated函数处理
+//（3）实现找出所有node上pod的函数
+//（4）如果enable-taint-manager=true，node有变化都需要经过 nc.taintManager.NodeUpdated函数
+//（5）实现node的监听处理，这里不管开没开taint-manager，都是要监听
+//（6）实现node, ds, lease的list，用于获取对象
 func NewNodeLifecycleController(
 	leaseInformer coordinformers.LeaseInformer,
 	podInformer coreinformers.PodInformer,
@@ -484,6 +492,7 @@ func NewNodeLifecycleController(
 	}
 	nc.podLister = podInformer.Lister()
 
+	// dfy: 启用了 TaintManager
 	if nc.runTaintManager {
 		podGetter := func(name, namespace string) (*v1.Pod, error) { return nc.podLister.Pods(namespace).Get(name) }
 		nodeLister := nodeInformer.Lister()
@@ -523,6 +532,8 @@ func NewNodeLifecycleController(
 		}),
 	})
 
+	// dfy: --feature-gates=NodeLease=xxx：默认值true，使用lease对象上报node心跳信息，替换老的更新node的status的方式，能大大减轻apiserver的负担；
+	// 以前通过门控开关 NodeLease 来判别是否使用 leaseInformer，现在直接使用。 可以参考 1.16版本
 	nc.leaseLister = leaseInformer.Lister()
 	nc.leaseInformerSynced = leaseInformer.Informer().HasSynced
 
@@ -536,6 +547,16 @@ func NewNodeLifecycleController(
 }
 
 // Run starts an asynchronous loop that monitors the status of cluster nodes.
+// dfy:
+// 逻辑如下：
+//（1）等待leaseInformer、nodeInformer、podInformerSynced、daemonSetInformerSynced同步完成。
+//（2）如果enable-taint-manager=true,开启nc.taintManager.Run
+//（3）执行doNodeProcessingPassWorker，这个是处理nodeUpdateQueue队列的node
+//（4）doPodProcessingWorker，这个是处理podUpdateQueue队列的pod
+//（5）如果开启了feature-gates=TaintBasedEvictions=true，执行doNoExecuteTaintingPass函数。否则执行doEvictionPass函数
+//（6）一直监听node状态是否健康
+//
+//链接：https://juejin.cn/post/7130531136878411789
 func (nc *Controller) Run(stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 
@@ -546,7 +567,12 @@ func (nc *Controller) Run(stopCh <-chan struct{}) {
 		return
 	}
 
+	// dfy: 若开启了 TaintManager，便运行
+	// --enable-taint-manager：默认值true，代表启动taintManager，当已经调度到该node上的pod不能容忍node的 NoExecute污点时，由TaintManager负责驱逐此类pod，若为false即不启动taintManager，则根据--pod-eviction-timeout来做驱逐操作；
+	// --feature-gates=TaintBasedEvictions=xxx：默认值true，配合--enable-taint-manager共同作用，两者均为true，才会开启污点驱逐；
+	//原文链接：https://blog.csdn.net/kyle18826138721/article/details/126879327
 	if nc.runTaintManager {
+		// 如果node没有taint了，那就取消该pod的处理（可能在定时队列中挂着）
 		go nc.taintManager.Run(stopCh)
 	}
 
@@ -563,10 +589,18 @@ func (nc *Controller) Run(stopCh <-chan struct{}) {
 		go wait.Until(nc.doNodeProcessingPassWorker, time.Second, stopCh)
 	}
 
+	// dfy: doPodProcessingWorker --> processPod --> processNoTaintBaseEviction --> evictPods
+	// 根据 podEvictionTimeout 情况，将 node 入队；若 node 已被标记为 evicted 状态，就直接删除 pod
 	for i := 0; i < podUpdateWorkerSize; i++ {
 		go wait.Until(nc.doPodProcessingWorker, time.Second, stopCh)
 	}
 
+	// dfy: v1.19 取消了 TaintBasedEvictions 门控开关，以前此处是通过门控开关控制 if nc.useTaintBasedEvictions {
+	// 现在只通过 --enable-taint-manager 参数来控制是否开启 TaintManager
+	//
+	// 以前是 TaintBasedEvictions 和 enable-taint-manager 都为 true，才能使用  TaintManager
+	// enable-taint-manager 都为 true, 只能初始化和运行 TaintManager
+	// 但要是门控开关 TaintBasedEvictions 不开启的话，此处无法跳转到 TaintManager 的处理逻辑
 	if nc.runTaintManager {
 		// Handling taint based evictions. Because we don't want a dedicated logic in TaintManager for NC-originated
 		// taints and we normally don't rate limit evictions caused by taints, we need to rate limit adding taints.
@@ -588,6 +622,10 @@ func (nc *Controller) Run(stopCh <-chan struct{}) {
 	<-stopCh
 }
 
+// dfy: 处理 nodeUpdateQueue 中的 node，为其添加合适的 NoSchedule taint 以及 label
+// 可以看出来doNodeProcessingPassWorker核心就是2件事：
+//（1）给node添加NoScheduleTaint
+//（2）给node添加lables
 func (nc *Controller) doNodeProcessingPassWorker() {
 	for {
 		obj, shutdown := nc.nodeUpdateQueue.Get()
@@ -597,12 +635,15 @@ func (nc *Controller) doNodeProcessingPassWorker() {
 			return
 		}
 		nodeName := obj.(string)
+		// dfy: 之前需要门控开关 TaintNodeByCondition 来开启 doNoScheduleTaintingPass 函数使用
+		// 现在不需要门控开关了，直接使用，为符合条件的 Node 打上 NoSchedule 的 taint
 		if err := nc.doNoScheduleTaintingPass(nodeName); err != nil {
 			klog.Errorf("Failed to taint NoSchedule on node <%s>, requeue it: %v", nodeName, err)
 			// TODO(k82cn): Add nodeName back to the queue
 		}
 		// TODO: re-evaluate whether there are any labels that need to be
 		// reconcile in 1.19. Remove this function if it's no longer necessary.
+		// dfy: reconcileNodeLabels就是及时给node更新
 		if err := nc.reconcileNodeLabels(nodeName); err != nil {
 			klog.Errorf("Failed to reconcile labels for node <%s>, requeue it: %v", nodeName, err)
 			// TODO(yujuhong): Add nodeName back to the queue
@@ -610,6 +651,17 @@ func (nc *Controller) doNodeProcessingPassWorker() {
 		nc.nodeUpdateQueue.Done(nodeName)
 	}
 }
+
+// dfy:
+// 核心逻辑就是检查该 node 是否需要添加对应的NoSchedule
+//逻辑为：
+//1、从 nodeLister 中获取该 node 对象；
+//2、判断该 node 是否存在以下几种 Condition：
+//	(1) False 或 Unknown 状态的 NodeReady Condition；(2) MemoryPressureCondition；(3) DiskPressureCondition；(4) NetworkUnavailableCondition；(5) PIDPressureCondition；
+//		若任一一种存在会添加对应的 NoSchedule taint；
+//3、判断 node 是否处于 Unschedulable 状态，若为 Unschedulable 也添加对应的 NoSchedule taint；
+//4、对比 node 已有的 taints 以及需要添加的 taints，以需要添加的 taints 为准，调用 nodeutil.SwapNodeControllerTaint 为 node 添加不存在的 taints 并删除不需要的 taints；
+//链接：https://juejin.cn/post/7130531136878411789
 
 func (nc *Controller) doNoScheduleTaintingPass(nodeName string) error {
 	node, err := nc.nodeLister.Get(nodeName)
@@ -666,6 +718,18 @@ func (nc *Controller) doNoScheduleTaintingPass(nodeName string) error {
 	return nil
 }
 
+// dfy: doNoExecuteTaintingPass(if useTaintBasedEvictions==true)
+// 启用taint manager 执行doNoExecuteTaintingPass–添加NoExecute的taint。这里不执行驱逐，驱逐单独在taint manager里处理。
+// doNoExecuteTaintingPass是一个令牌桶限速队列（也是受受参数evictionLimiterQPS影响，默认0.1也就是10s驱逐一个node）
+//
+// - 遍历zoneNoExecuteTainter，获得一个zone的node队列，从队列中获取一个node，执行下面步骤
+// - 从缓存中获取node
+// - 如果node ready condition为false，移除“node.kubernetes.io/unreachable”的taint，
+//   添加“node.kubernetes.io/not-ready” 的taint，Effect为NoExecute。
+// - 如果node ready condition为unknown，移除“node.kubernetes.io/not-ready” 的taint，
+//   添加“node.kubernetes.io/unreachable” 的taint，Effect为NoExecute。
+//
+//链接：https://juejin.cn/post/7130531136878411789
 func (nc *Controller) doNoExecuteTaintingPass() {
 	nc.evictorLock.Lock()
 	defer nc.evictorLock.Unlock()
@@ -714,6 +778,20 @@ func (nc *Controller) doNoExecuteTaintingPass() {
 	}
 }
 
+// dfy:  doEvictionPass(if useTaintBasedEvictions==false)
+// doEvictionPass是一个令牌桶限速队列(受参数evictionLimiterQPS影响，默认0.1也就是10s驱逐一个node) ，
+// +加入这个队列的node都是 unready状态持续时间大于podEvictionTimeout。(这个就是processNoTaintBaseEviction将node加入了队列)
+// - 遍历zonePodEvictor，获取一个zone里的node队列，从队列中获取一个node，执行下面步骤
+// - 获取node的uid，从缓存中获取node上的所有pod
+// - 执行DeletePods–删除daemonset之外的所有pod，保留daemonset的pod
+// 1) 遍历所由的pod，检查pod绑定的node是否跟提供的一样，不一样则跳过这个pod
+// 2)执行SetPodTerminationReason–设置pod Status.Reason为NodeLost，Status.Message为"Node %v which was running pod %v is unresponsive"，并更新pod。
+// 3)如果pod 设置了DeletionGracePeriodSeconds，说明pod已经被删除，则跳过这个pod
+// 4)判断pod是否为daemonset的pod，如果是则跳过这个pod
+// 5)删除这个pod
+// - 在nodeEvictionMap设置node的状态为evicted
+//
+//链接：https://juejin.cn/post/7130531136878411789
 func (nc *Controller) doEvictionPass() {
 	nc.evictorLock.Lock()
 	defer nc.evictorLock.Unlock()
@@ -759,6 +837,15 @@ func (nc *Controller) doEvictionPass() {
 	}
 }
 
+// dfy:
+// - 无论是否启用了 TaintBasedEvictions 特性，需要打 taint 或者驱逐 pod 的 node 都会被放在 zoneNoExecuteTainter 或者 zonePodEvictor 队列中，
+// 而 nc.monitorNodeHealth 就是这两个队列中数据的生产者。
+// - nc.monitorNodeHealth 的主要功能是持续监控 node 的状态，当 node 处于异常状态时更新 node 的 taint 以及 node 上 pod 的状态
+// 或者直接驱逐 node 上的 pod，此外还会为集群下的所有 node 划分 zoneStates 并为每个 zoneStates 设置对应的驱逐速率。
+// - 每隔nodeMonitorPeriod周期，执行一次monitorNodeHealth，维护node状态和zone的状态，更新未响应的node
+// – 设置node status为unknown和根据集群不同状态设置zone的速率。
+//
+//链接：https://juejin.cn/post/7130531136878411789
 // monitorNodeHealth verifies node health are constantly updated by kubelet, and
 // if not, post "NodeReady==ConditionUnknown".
 // This function will taint nodes who are not ready or not reachable for a long period of time.
@@ -780,6 +867,7 @@ func (nc *Controller) monitorNodeHealth() error {
 	for i := range newZoneRepresentatives {
 		// dfy: zonePodEvictor 负责将 pod 从无响应的节点驱逐出去
 		// dfy: zoneNoExecuteTainter 负责为 node 打上污点 taint（是给 node 打上 不可执行的 taint？）
+		// dfy: 考虑是否打上 NoExecute Taint
 		nc.addPodEvictorForNewZone(newZoneRepresentatives[i])
 	}
 
@@ -791,6 +879,7 @@ func (nc *Controller) monitorNodeHealth() error {
 		nc.addPodEvictorForNewZone(added[i])
 		if nc.runTaintManager {
 			// dfy: 移除 node 的 unreach taint 和 notReady taint，并从 zoneNoExecuteTainter 移除该 node
+			// dfy: 考虑是否移除  NoExecute Taint
 			nc.markNodeAsReachable(added[i])
 		} else {
 			// dfy: 从 zonePodEvictor 删除该 node
@@ -925,6 +1014,19 @@ func (nc *Controller) processTaintBaseEviction(node *v1.Node, observedReadyCondi
 	}
 }
 
+// dfy: 在 podEvictionTimeout 时间后，驱逐该 node 上的 pod ；不看 Taint 只看是否到时间该驱逐了
+// 核心逻辑如下：
+//（1）node最后发现ReadyCondition为false，如果nodeHealthMap里的readyTransitionTimestamp加上podEvictionTimeout的时间是过去的时间
+//  –ReadyCondition为false状态已经持续了至少podEvictionTimeout，执行evictPods。
+//（2）node最后发现ReadyCondition为unknown，如果nodeHealthMap里的probeTimestamp加上podEvictionTimeout的时间是过去的时间
+//  –ReadyCondition为false状态已经持续了至少podEvictionTimeout，执行evictPods。
+//（3）node最后发现ReadyCondition为true，则执行cancelPodEviction
+//  –在nodeEvictionMap设置status为unmarked，然后node从zonePodEvictor队列中移除。
+//
+// evictPods并不会马上驱逐pod，他还是看node是否已经是驱逐状态。
+// evictPods先从nodeEvictionMap获取node驱逐的状态，如果是evicted说明node已经发生驱逐，则把node上的这个pod删除。
+// 否则设置状态为toBeEvicted，然后node加入zonePodEvictor队列等待执行驱逐pod
+//链接：https://juejin.cn/post/7130531136878411789
 func (nc *Controller) processNoTaintBaseEviction(node *v1.Node, observedReadyCondition *v1.NodeCondition, gracePeriod time.Duration, pods []*v1.Pod) error {
 	decisionTimestamp := nc.now()
 	nodeHealthData := nc.nodeHealthMap.getDeepCopy(node.Name)
@@ -936,6 +1038,7 @@ func (nc *Controller) processNoTaintBaseEviction(node *v1.Node, observedReadyCon
 	case v1.ConditionFalse:
 		// dfy: 在 readyTransitionTimestamp + podEvictionTimeout 时间后，驱逐该 node 上的 pod
 		if decisionTimestamp.After(nodeHealthData.readyTransitionTimestamp.Add(nc.podEvictionTimeout)) {
+			// dfy: 将 node 放入到待驱逐队列
 			enqueued, err := nc.evictPods(node, pods) // dfy: 驱逐 pod 逻辑，待看
 			if err != nil {
 				return err
@@ -1291,6 +1394,14 @@ func (nc *Controller) podUpdated(oldPod, newPod *v1.Pod) {
 	}
 }
 
+// dfy:
+// doPodProcessingWorker从podUpdateQueue读取一个pod，执行processPod。（注意这里的podUpdateQueue和tainManger的podUpdateQueue不是一个队列，是同名而已）
+//processPod和新逻辑如下：
+//（1） 判断NodeCondition是否notReady
+//（2）如果feature-gates=TaintBasedEvictions=false，则执行processNoTaintBaseEviction
+//（3）最终都会判断node ReadyCondition是否不为true，如果不为true, 执行MarkPodsNotReady
+//	–如果pod的ready condition不为false， 将pod的ready condition设置为false，并更新LastTransitionTimestamp；否则不更新pod
+//链接：https://juejin.cn/post/7130531136878411789
 func (nc *Controller) doPodProcessingWorker() {
 	for {
 		obj, shutdown := nc.podUpdateQueue.Get()
@@ -1350,6 +1461,7 @@ func (nc *Controller) processPod(podItem podUpdateItem) {
 	// In taint-based eviction mode, only node updates are processed by NodeLifecycleController.
 	// Pods are processed by TaintManager.
 	if !nc.runTaintManager {
+		// dfy: 没有 Taint 是的处理方式，等待 podEvictionTimeout 时间，将 pod 加入待驱逐队列
 		if err := nc.processNoTaintBaseEviction(node, currentReadyCondition, nc.nodeMonitorGracePeriod, pods); err != nil {
 			klog.Warningf("Unable to process pod %+v eviction from node %v: %v.", podItem, nodeName, err)
 			nc.podUpdateQueue.AddRateLimited(podItem)
@@ -1491,6 +1603,8 @@ func (nc *Controller) cancelPodEviction(node *v1.Node) bool {
 //   Returns false if the node name was already enqueued.
 // - deletes pods immediately if node is already marked as evicted.
 //   Returns false, because the node wasn't added to the queue.
+// - 若 node 没有被标记为 evicted，就将node放入到 evictor 队列；若已在队列，返回 false
+// - 若 node 已被标记 evicted，就立刻删除 pods；若node 没有被添加到队列，返回 false
 func (nc *Controller) evictPods(node *v1.Node, pods []*v1.Pod) (bool, error) {
 	nc.evictorLock.Lock()
 	defer nc.evictorLock.Unlock()
@@ -1507,6 +1621,7 @@ func (nc *Controller) evictPods(node *v1.Node, pods []*v1.Pod) (bool, error) {
 	if !nc.nodeEvictionMap.setStatus(node.Name, toBeEvicted) {
 		klog.V(2).Infof("node %v was unregistered in the meantime - skipping setting status", node.Name)
 	}
+	// dfy: 将 node 放入到待驱逐队列？
 	return nc.zonePodEvictor[utilnode.GetZoneKey(node)].Add(node.Name, string(node.UID)), nil
 }
 

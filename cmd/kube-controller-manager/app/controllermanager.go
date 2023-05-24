@@ -137,6 +137,7 @@ controller, and serviceaccounts controller.`,
 	}
 
 	fs := cmd.Flags()
+	// dfy: 读取命令行信息 进行配置
 	namedFlagSets := s.Flags(KnownControllers(), ControllersDisabledByDefault.List())
 	verflag.AddFlags(namedFlagSets.FlagSet("global"))
 	globalflag.AddGlobalFlags(namedFlagSets.FlagSet("global"), cmd.Name())

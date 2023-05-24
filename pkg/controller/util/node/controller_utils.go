@@ -60,6 +60,7 @@ func DeletePods(kubeClient clientset.Interface, pods []*v1.Pod, recorder record.
 		// Pod will be modified, so making copy is required.
 		pod := pods[i].DeepCopy()
 		// Set reason and message in the pod object.
+		// dfy: 设置 Pod 为 Terminating?
 		if _, err := SetPodTerminationReason(kubeClient, pod, nodeName); err != nil {
 			if apierrors.IsConflict(err) {
 				updateErrList = append(updateErrList,
