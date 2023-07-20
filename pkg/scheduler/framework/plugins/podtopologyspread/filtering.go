@@ -297,7 +297,7 @@ func (pl *PodTopologySpread) calPreFilterState(pod *v1.Pod) (*preFilterState, er
 			if tpCount == nil {
 				continue
 			}
-			// dfy: 统计该 constraints 对应的 Selector 匹配到当前 node 上的 Pod 的数量
+			// dfy: 统计该 constraints 对应的 Selector ，匹配到当前 node 上与此 pod 同 namespace 下的 Pod 的数量
 			count := countPodsMatchSelector(nodeInfo.Pods, constraint.Selector, pod.Namespace)
 			// dfy: 将其累加到对应的 TpPair
 			atomic.AddInt32(tpCount, int32(count))

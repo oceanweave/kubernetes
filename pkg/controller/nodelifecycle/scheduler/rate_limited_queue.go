@@ -33,6 +33,7 @@ const (
 	NodeHealthUpdateRetry = 5
 	// NodeEvictionPeriod controls how often NodeController will try to
 	// evict Pods from non-responsive Nodes.
+	// dfy: NodeEvictionperiod 控制 NodeController 尝试从无响应节点中驱逐 Pods 的频率。
 	NodeEvictionPeriod = 100 * time.Millisecond
 	// EvictionRateLimiterBurst is the burst value for all eviction rate
 	// limiters
@@ -111,6 +112,7 @@ func (q *UniqueQueue) Replace(value TimedValue) bool {
 		if q.queue[i].Value != value.Value {
 			continue
 		}
+		// dfy: value 相同的话，不需要考虑 set 的增删，因为是相同的值
 		heap.Remove(&q.queue, i)
 		heap.Push(&q.queue, &value)
 		return true
@@ -197,9 +199,15 @@ func (q *UniqueQueue) Clear() {
 // RateLimitedTimedQueue is a unique item priority queue ordered by
 // the expected next time of execution. It is also rate limited.
 type RateLimitedTimedQueue struct {
+	// dfy: queue 是个优先队列，用小顶堆实现，同时用 set 保证元素是唯一的
 	queue       UniqueQueue
 	limiterLock sync.Mutex
-	limiter     flowcontrol.RateLimiter
+	// dfy: 简单解释一下，kubernetes 中实现的flowcontrol.RateLimiter基于 token bucket(即令牌桶)算法来完成限流。
+	// 该算法原理是系统会以一个恒定的速度往桶里放入令牌，而如果请求需要被处理，则需要先从桶里获取一个令牌，当桶里没有令牌可取时，则拒绝服务。
+	// 这里 NewTokenBucketRateLimiterWithClock 时，桶中的令牌的最大数量是brust，往桶中放入令牌的速率是qps，
+	// 初始化时会向桶中放入brust个令牌。TryAccept()会尝试去桶中获取令牌，能过获取到则返回 true，反之返回 false。
+	// 参考： https://www.cnblogs.com/maoqide/p/12829819.html
+	limiter flowcontrol.RateLimiter
 }
 
 // NewRateLimitedTimedQueue creates new queue which will use given
@@ -235,23 +243,29 @@ func (q *RateLimitedTimedQueue) Try(fn ActionFunc) {
 	defer q.limiterLock.Unlock()
 	for ok {
 		// rate limit the queue checking
+		// dfy: 尝试获取令牌
 		if !q.limiter.TryAccept() {
 			klog.V(10).Infof("Try rate limited for value: %v", val)
 			// Try again later
 			break
 		}
 
+		// dfy: 获取到了令牌
 		now := now()
 		if now.Before(val.ProcessAt) {
 			break
 		}
 
+		// dfy: fn 处理从 queue 中取出的 item
 		if ok, wait := fn(val); !ok {
+			// dfy: 需要修改，设置应该处理的时间
 			val.ProcessAt = now.Add(wait + 1)
 			q.queue.Replace(val)
 		} else {
+			// dfy: 处理完成后，从 queue 中移除该 item
 			q.queue.RemoveFromQueue(val.Value)
 		}
+		// dfy: 继续取下一个 item 进行处理
 		val, ok = q.queue.Head()
 	}
 }

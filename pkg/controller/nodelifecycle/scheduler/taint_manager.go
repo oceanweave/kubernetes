@@ -107,9 +107,11 @@ func deletePodHandler(c clientset.Interface, emitEventFunc func(types.Namespaced
 		klog.V(0).Infof("NoExecuteTaintManager is deleting Pod: %v", args.NamespacedName.String())
 		if emitEventFunc != nil {
 			// dfy: 污点标记删除事件的语句是 emitEventFunc(args.NamespacedName) ，它会产生一个 Marking for deletion Pod %s 事件，在 Kubernetes 的管理后台也能看到
+			// dfy: 发送 删除 Pod event
 			emitEventFunc(args.NamespacedName)
 		}
 		var err error
+		// dfy: 删除 pod，最多尝试 retries 次数
 		for i := 0; i < retries; i++ {
 			err = c.CoreV1().Pods(ns).Delete(context.TODO(), name, metav1.DeleteOptions{})
 			if err == nil {
@@ -179,7 +181,7 @@ func NewNoExecuteTaintManager(c clientset.Interface, getPod GetPodFunc, getNode 
 		nodeUpdateQueue: workqueue.NewNamed("noexec_taint_node"),
 		podUpdateQueue:  workqueue.NewNamed("noexec_taint_pod"),
 	}
-	// dfy: 删除 Pod
+	// dfy: 创建 queue 用于记录待删除 pod ，并配置删除 pod 函数
 	tm.taintEvictionQueue = CreateWorkerQueue(deletePodHandler(c, tm.emitPodDeletionEvent))
 
 	return tm
@@ -207,6 +209,8 @@ func NewNoExecuteTaintManager(c clientset.Interface, getPod GetPodFunc, getNode 
 func (tc *NoExecuteTaintManager) Run(stopCh <-chan struct{}) {
 	klog.V(0).Infof("Starting NoExecuteTaintManager")
 
+	// dfy: 创建 channel 用于传递更新事件  1. node 更新 2. pod 更新
+	// dfy: 各创建 UpdateWorkerSize 个 channel，channel 大小为 NodeUpdateChannelSize 和 podUpdateChannelSize
 	for i := 0; i < UpdateWorkerSize; i++ {
 		tc.nodeUpdateChannels = append(tc.nodeUpdateChannels, make(chan nodeUpdateItem, NodeUpdateChannelSize))
 		tc.podUpdateChannels = append(tc.podUpdateChannels, make(chan podUpdateItem, podUpdateChannelSize))
@@ -214,6 +218,8 @@ func (tc *NoExecuteTaintManager) Run(stopCh <-chan struct{}) {
 
 	// Functions that are responsible for taking work items out of the workqueues and putting them
 	// into channels.
+	// dfy: 从 workqueue 中去除 item  放入到  对应的 channel 中
+	// nodeUpdateQueue --> nodeUpdateChannels
 	go func(stopCh <-chan struct{}) {
 		for {
 			item, shutdown := tc.nodeUpdateQueue.Get()
@@ -221,6 +227,7 @@ func (tc *NoExecuteTaintManager) Run(stopCh <-chan struct{}) {
 				break
 			}
 			nodeUpdate := item.(nodeUpdateItem)
+			// dfy: 为了负载均衡，将 event 尽量均匀分配到各个 channel
 			hash := hash(nodeUpdate.nodeName, UpdateWorkerSize)
 			select {
 			case <-stopCh:
@@ -232,6 +239,7 @@ func (tc *NoExecuteTaintManager) Run(stopCh <-chan struct{}) {
 		}
 	}(stopCh)
 
+	// podUpdateQueue --> podUpdateChannels
 	go func(stopCh <-chan struct{}) {
 		for {
 			item, shutdown := tc.podUpdateQueue.Get()
@@ -254,6 +262,7 @@ func (tc *NoExecuteTaintManager) Run(stopCh <-chan struct{}) {
 		}
 	}(stopCh)
 
+	// dfy: 创建等同 channel 数量 UpdateWorkerSize 的处理器 worker
 	wg := sync.WaitGroup{}
 	wg.Add(UpdateWorkerSize)
 	for i := 0; i < UpdateWorkerSize; i++ {
@@ -327,7 +336,7 @@ func (tc *NoExecuteTaintManager) PodUpdated(oldPod *v1.Pod, newPod *v1.Pod) {
 		podNamespace: podNamespace,
 		nodeName:     nodeName,
 	}
-
+	// dfy: 添加到 queue 中
 	tc.podUpdateQueue.Add(updateItem)
 }
 
@@ -356,6 +365,7 @@ func (tc *NoExecuteTaintManager) NodeUpdated(oldNode *v1.Node, newNode *v1.Node)
 	tc.nodeUpdateQueue.Add(updateItem)
 }
 
+// dfy: 从 workers 删除此 pod worker, 就是 取消 Pod 的删除
 func (tc *NoExecuteTaintManager) cancelWorkWithEvent(nsName types.NamespacedName) {
 	if tc.taintEvictionQueue.CancelWork(nsName.String()) {
 		tc.emitCancelPodDeletionEvent(nsName)
@@ -384,11 +394,13 @@ func (tc *NoExecuteTaintManager) processPodOnNode(
 	if len(taints) == 0 {
 		tc.cancelWorkWithEvent(podNamespacedName)
 	}
+	// dfy: 若此 pod  tolerations 没有设置 NoExecute taint 忍受，就立刻删除
 	allTolerated, usedTolerations := v1helper.GetMatchingTolerations(taints, tolerations)
 	if !allTolerated {
 		klog.V(2).Infof("Not all taints are tolerated after update for Pod %v on %v", podNamespacedName.String(), nodeName)
 		// We're canceling scheduled work (if any), as we're going to delete the Pod right away.
 		tc.cancelWorkWithEvent(podNamespacedName)
+		// dfy: 添加删除 woker，并立刻删除
 		tc.taintEvictionQueue.AddWork(NewWorkArgs(podNamespacedName.Name, podNamespacedName.Namespace), time.Now(), time.Now())
 		return
 	}
@@ -401,6 +413,9 @@ func (tc *NoExecuteTaintManager) processPodOnNode(
 		return
 	}
 
+	// dfy: 考虑 minTolerationTime 的更新，
+	// 若当前 minTolerationTime + now 仍在原来的  triggerTime 范围内，就不变动
+	// 若当前 minTolerationTime + now 大于原来的  triggerTime 范围，就取消当前对应的 worker，重新添加个 woker
 	startTime := now
 	triggerTime := startTime.Add(minTolerationTime)
 	scheduledEviction := tc.taintEvictionQueue.GetWorkerUnsafe(podNamespacedName.String())
@@ -412,6 +427,7 @@ func (tc *NoExecuteTaintManager) processPodOnNode(
 		tc.cancelWorkWithEvent(podNamespacedName)
 	}
 	// dfy: 把要驱逐的 Pod 信息添加到污点驱逐队列（taintEvictionQueue）中，指定创建时间（now）和触发时间（now + minTolerationTime）
+	// dfy: 创建定时删除任务
 	tc.taintEvictionQueue.AddWork(NewWorkArgs(podNamespacedName.Name, podNamespacedName.Namespace), startTime, triggerTime)
 }
 
@@ -502,9 +518,11 @@ func (tc *NoExecuteTaintManager) handleNodeUpdate(nodeUpdate nodeUpdateItem) {
 		return
 	}
 	// Short circuit, to make this controller a bit faster.
+	// dfy: 没有taints 取消处理
 	if len(taints) == 0 {
 		klog.V(4).Infof("All taints were removed from the Node %v. Cancelling all evictions...", node.Name)
 		for i := range pods {
+			// dfy: 从 workers 删除此 pod worker, 就是 取消 Pod 的删除
 			tc.cancelWorkWithEvent(types.NamespacedName{Namespace: pods[i].Namespace, Name: pods[i].Name})
 		}
 		return

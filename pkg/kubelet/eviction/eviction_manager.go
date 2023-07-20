@@ -214,6 +214,9 @@ func (m *managerImpl) Start(diskInfoProvider DiskInfoProvider, podFunc ActivePod
 func (m *managerImpl) IsUnderMemoryPressure() bool {
 	m.RLock()
 	defer m.RUnlock()
+	// dfy:
+	// kl.evictionManager.IsUnderMemoryPressure 由调用方可知，此处指的是 evictionManager 的 nodeConditions，不是 Node Conditions
+	// 他们之间是有一些转化的，也就是阈值的判定
 	return hasNodeCondition(m.nodeConditions, v1.NodeMemoryPressure)
 }
 
@@ -290,6 +293,7 @@ func (m *managerImpl) synchronize(diskInfoProvider DiskInfoProvider, podFunc Act
 	thresholdsFirstObservedAt := thresholdsFirstObservedAt(thresholds, m.thresholdsFirstObservedAt, now)
 
 	// the set of node conditions that are triggered by currently observed thresholds
+	// dfy: 当到达触发阈值是，会将该 Condition 进行记录下来,之后更新到 m.nodeConditions，用于后续压力判定
 	nodeConditions := nodeConditions(thresholds)
 	if len(nodeConditions) > 0 {
 		klog.V(3).Infof("eviction manager: node conditions - observed: %v", nodeConditions)
@@ -310,6 +314,7 @@ func (m *managerImpl) synchronize(diskInfoProvider DiskInfoProvider, podFunc Act
 
 	// update internal state
 	m.Lock()
+	// dfy: 更新记录下来，用于后续压力判定
 	m.nodeConditions = nodeConditions
 	m.thresholdsFirstObservedAt = thresholdsFirstObservedAt
 	m.nodeConditionsLastObservedAt = nodeConditionsLastObservedAt

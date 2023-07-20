@@ -50,11 +50,13 @@ type TimedWorker struct {
 
 // CreateWorker creates a TimedWorker that will execute `f` not earlier than `fireAt`.
 func CreateWorker(args *WorkArgs, createdAt time.Time, fireAt time.Time, f func(args *WorkArgs) error) *TimedWorker {
+	// dfy: 若到达时间，就立刻删除
 	delay := fireAt.Sub(createdAt)
 	if delay <= 0 {
 		go f(args)
 		return nil
 	}
+	// dfy: 否则创建定时器，用于定时删除
 	timer := time.AfterFunc(delay, func() { f(args) })
 	return &TimedWorker{
 		WorkItem:  args,
@@ -81,6 +83,7 @@ type TimedWorkerQueue struct {
 
 // CreateWorkerQueue creates a new TimedWorkerQueue for workers that will execute
 // given function `f`.
+// `f` 指定是工作函数，此处一般指的是 Pod 删除函数
 func CreateWorkerQueue(f func(args *WorkArgs) error) *TimedWorkerQueue {
 	return &TimedWorkerQueue{
 		workers:  make(map[string]*TimedWorker),
@@ -90,6 +93,7 @@ func CreateWorkerQueue(f func(args *WorkArgs) error) *TimedWorkerQueue {
 
 func (q *TimedWorkerQueue) getWrappedWorkerFunc(key string) func(args *WorkArgs) error {
 	return func(args *WorkArgs) error {
+		// dfy: workFunc 就是删除删除
 		err := q.workFunc(args)
 		q.Lock()
 		defer q.Unlock()
@@ -115,6 +119,7 @@ func (q *TimedWorkerQueue) AddWork(args *WorkArgs, createdAt time.Time, fireAt t
 		klog.Warningf("Trying to add already existing work for %+v. Skipping.", args)
 		return
 	}
+	// dfy: 创建定时删除任务
 	worker := CreateWorker(args, createdAt, fireAt, q.getWrappedWorkerFunc(key))
 	q.workers[key] = worker
 }

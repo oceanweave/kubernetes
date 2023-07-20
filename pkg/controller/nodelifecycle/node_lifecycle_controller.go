@@ -126,10 +126,14 @@ const (
 
 const (
 	// The amount of time the nodecontroller should sleep between retrying node health updates
+	// dfy: 更新 node health 时间间隔
 	retrySleepTime   = 20 * time.Millisecond
 	nodeNameKeyIndex = "spec.nodeName"
 	// podUpdateWorkerSizes assumes that in most cases pod will be handled by monitorNodeHealth pass.
 	// Pod update workers will only handle lagging cache pods. 4 workers should be enough.
+	// dfy:
+	// podUpdateWorkerSize 假设在大多数情况下 pod 将由 monitorNodeHealth 处理。
+	// Pod 更新 workers 将只处理滞后的缓存 Pods。四个工人就够了。
 	podUpdateWorkerSize = 4
 )
 
@@ -139,6 +143,9 @@ const (
 //   primaryKey as the source of truth to reconcile.
 //   - If ensureSecondaryExists is true, and the secondaryKey does not
 //   exist, secondaryKey will be added with the value of the primaryKey.
+// dfy: 同步 node label 但不太清楚什么作用
+// - 若 primaryKey 和 secondaryKey 都存在，但值不匹配，用 primaryKey 的值去同步调谐
+// - 若 ensureSecondaryExists 为 true 且 secondaryKey 不存在，secondaryKey 将会被添加和 primaryKey 相同的值
 var labelReconcileInfo = []struct {
 	primaryKey            string
 	secondaryKey          string
@@ -254,6 +261,7 @@ func (n *nodeEvictionMap) setStatus(nodeName string, status evictionStatus) bool
 func (n *nodeEvictionMap) getStatus(nodeName string) (evictionStatus, bool) {
 	n.lock.Lock()
 	defer n.lock.Unlock()
+	// dfy: 没有找到，认为 pod 是健康的，返回 unmarked
 	if _, exists := n.nodeEvictions[nodeName]; !exists {
 		return unmarked, false
 	}
@@ -309,10 +317,12 @@ type Controller struct {
 	// check node health signal posted from kubelet. This value should be lower than
 	// nodeMonitorGracePeriod.
 	// TODO: Change node health monitor to watch based.
+	// dfy: 控制 Controller 监控 node 健康状态时间间隔
 	nodeMonitorPeriod time.Duration
 
 	// When node is just created, e.g. cluster bootstrap or node creation, we give
 	// a longer grace period.
+	// dfy: node 创建或刚启动时，给予的宽限期
 	nodeStartupGracePeriod time.Duration
 
 	// Controller will not proactively sync node health, but will monitor node
@@ -322,10 +332,16 @@ type Controller struct {
 	// of time, it will start posting "NodeReady==ConditionUnknown". The amount of
 	// time before which Controller start evicting pods is controlled via flag
 	// 'pod-eviction-timeout'.
+	// 控制器不会主动同步节点健康状况，但是会监视从 kublet 更新的节点健康信号。
+	// 有两种节点健康信号: NodeStatus 和 NodeLease。
+	// NodeLease 信号仅在启用NodeLease 功能时生成。如果在这段时间内没有收到更新，它将开始发布“ NodeReady = = ConditionUnknown”。
+	// Controller 开始驱逐 pod 的时间通过 Flag ‘ pod-evication-timeout’来控制。
+
 	// Note: be cautious when changing the constant, it must work with
 	// nodeStatusUpdateFrequency in kubelet and renewInterval in NodeLease
 	// controller. The node health signal update frequency is the minimal of the
 	// two.
+	// 注意: 在更改常量时要小心，它必须在 kubelet 中使用 nodeStatusUpdateChannel，在 NodeLease//controller 中使用 newInterval。节点健康信号更新频率是//两个中的最小值。
 	// There are several constraints:
 	// 1. nodeMonitorGracePeriod must be N times more than  the node health signal
 	//    update frequency, where N means number of retries allowed for kubelet to
@@ -335,6 +351,17 @@ type Controller struct {
 	//    update frequency. The constant must be less than podEvictionTimeout.
 	// 2. nodeMonitorGracePeriod can't be too large for user experience - larger
 	//    value takes longer for user to see up-to-date node health.
+	// 有几个约束:
+	// 1. nodeMonitorGracePeriod 必须是节点健康信号更新频率的 N 倍以上，其中 N 表示允许 kubelet 上报节点状态/租约进行重试的次数。
+	//    使 nodeMonitorGracePeriod 小于节点健康信号更新频率是没有意义的，因为只有在节点健康信号更新频率的间隔内才会有来自 Kubelet 的新值。
+	//    常量必须小于 podEvictionTimeout。
+	// 2. nodeMonitorGracePeriod 对于用户体验来说，不能太大
+	//    -更大的值需要更长的时间才能让用户查看最新的节点健康状况。
+
+	// dfy: 上面说的意思就是，nodeMonitorGracePeriod 是 nodeMonitorPeriod 的 N 倍，N 是 重试次数
+	//      nodeMonitorPeriod 是从 kubelet 获取 Node 状态的时间间隔  默认40s
+	//      nodeMonitorGracePeriod 应该是 多次获取 Node 状态失败后，为 Node 设置状态的时间间隔，要小于 podEvictionTimeout —— 猜测
+	// 		podEvictionTimeout 是 Node NotReady 后驱逐 Pod 的等待时长，默认 5 min
 	nodeMonitorGracePeriod time.Duration
 
 	podEvictionTimeout          time.Duration
@@ -381,6 +408,11 @@ func NewNodeLifecycleController(
 		klog.Fatalf("kubeClient is nil when starting Controller")
 	}
 
+	// dfy：
+	// eventBroadcaster 是个事件广播器，StartLogging 和 StartRecordingToSink 创建了两个不同的事件处理函数，分别把事件记录到日志和发送给 apiserver。
+	// 而 NewRecorder 新建了一个 Recoder 对象，通过它的 Event、Eventf 和 PastEventf 方法，用户可以往里面发送事件，
+	// eventBroadcaster 会把接收到的事件发送个多个处理函数，比如这里提到的写日志和发送到 apiserver。
+	// https://www.ngui.cc/el/1955628.html?action=onClick
 	eventBroadcaster := record.NewBroadcaster()
 	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "node-controller"})
 	eventBroadcaster.StartStructuredLogging(0)
@@ -391,6 +423,7 @@ func NewNodeLifecycleController(
 			Interface: v1core.New(kubeClient.CoreV1().RESTClient()).Events(""),
 		})
 
+	// dfy: 在 Prometheus 中注册指标进行记录？
 	if kubeClient.CoreV1().RESTClient().GetRateLimiter() != nil {
 		ratelimiter.RegisterMetricAndTrackRateLimiterUsage("node_lifecycle_controller", kubeClient.CoreV1().RESTClient().GetRateLimiter())
 	}
@@ -423,10 +456,14 @@ func NewNodeLifecycleController(
 	nc.enterFullDisruptionFunc = nc.HealthyQPSFunc
 	nc.computeZoneStateFunc = nc.ComputeZoneState
 
+	// dfy: 关注 Pod 更新事件
+	// dfy: 注意此时 nc.taintManager 还未初始化，那为什么还有此 if 逻辑？是不是肯定不会运行？
+	// dfy: 不是的。因此此处只是注册处理函数，还未真正调用，调用的时候，taintManager 已经初始化完成，因此是可以跳转到 if 逻辑的
 	podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			pod := obj.(*v1.Pod)
 			nc.podUpdated(nil, pod)
+			// dfy: 若开启 taintManager ，需要考虑更新 Pod Tolerations
 			if nc.taintManager != nil {
 				nc.taintManager.PodUpdated(nil, pod)
 			}
@@ -461,6 +498,7 @@ func NewNodeLifecycleController(
 		},
 	})
 	nc.podInformerSynced = podInformer.Informer().HasSynced
+	// dfy： 创建 Indexers  spec.nodeName -- nodeName -- node-pods
 	podInformer.Informer().AddIndexers(cache.Indexers{
 		nodeNameKeyIndex: func(obj interface{}) ([]string, error) {
 			pod, ok := obj.(*v1.Pod)
@@ -474,7 +512,9 @@ func NewNodeLifecycleController(
 		},
 	})
 
+	// dfy: 获取 Indexers
 	podIndexer := podInformer.Informer().GetIndexer()
+	// dfy: 利用 Indexers 获取该指定 node 上的所有 Pod
 	nc.getPodsAssignedToNode = func(nodeName string) ([]*v1.Pod, error) {
 		objs, err := podIndexer.ByIndex(nodeNameKeyIndex, nodeName)
 		if err != nil {
@@ -497,6 +537,7 @@ func NewNodeLifecycleController(
 		podGetter := func(name, namespace string) (*v1.Pod, error) { return nc.podLister.Pods(namespace).Get(name) }
 		nodeLister := nodeInformer.Lister()
 		nodeGetter := func(name string) (*v1.Node, error) { return nodeLister.Get(name) }
+		// dfy: 初始化 TaintManager 并配置删除函数等
 		nc.taintManager = scheduler.NewNoExecuteTaintManager(kubeClient, podGetter, nodeGetter, nc.getPodsAssignedToNode)
 		nodeInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 			AddFunc: nodeutil.CreateAddNodeHandler(func(node *v1.Node) error {
@@ -563,6 +604,7 @@ func (nc *Controller) Run(stopCh <-chan struct{}) {
 	klog.Infof("Starting node controller")
 	defer klog.Infof("Shutting down node controller")
 
+	// dfy: 等待这几种资源同步
 	if !cache.WaitForNamedCacheSync("taint", stopCh, nc.leaseInformerSynced, nc.nodeInformerSynced, nc.podInformerSynced, nc.daemonSetInformerSynced) {
 		return
 	}
@@ -573,14 +615,17 @@ func (nc *Controller) Run(stopCh <-chan struct{}) {
 	//原文链接：https://blog.csdn.net/kyle18826138721/article/details/126879327
 	if nc.runTaintManager {
 		// 如果node没有taint了，那就取消该pod的处理（可能在定时队列中挂着）
+		// dfy: work queue --> work channel --> 之后进行处理
 		go nc.taintManager.Run(stopCh)
 	}
 
+	// dfy : 下面是评估事件，将其放入到 work queue 中
 	// Close node update queue to cleanup go routine.
 	defer nc.nodeUpdateQueue.ShutDown()
 	defer nc.podUpdateQueue.ShutDown()
 
 	// Start workers to reconcile labels and/or update NoSchedule taint for nodes.
+	// dfy: 调谐 labels，为 nodes 添加 NoSchedule taint
 	for i := 0; i < scheduler.UpdateWorkerSize; i++ {
 		// Thanks to "workqueue", each worker just need to get item from queue, because
 		// the item is flagged when got from queue: if new event come, the new item will
@@ -613,6 +658,7 @@ func (nc *Controller) Run(stopCh <-chan struct{}) {
 	}
 
 	// Incorporate the results of node health signal pushed from kubelet to master.
+	// dfy: nodeMonitorPeriod 应该是监控 node 状态的时间间隔，默认为 40s
 	go wait.Until(func() {
 		if err := nc.monitorNodeHealth(); err != nil {
 			klog.Errorf("Error monitoring node health: %v", err)
@@ -674,6 +720,7 @@ func (nc *Controller) doNoScheduleTaintingPass(nodeName string) error {
 	}
 
 	// Map node's condition to Taints.
+	// dfy: 若 node 的 status condition 在这个范围，就打上 NoSchedule taint
 	var taints []v1.Taint
 	for _, condition := range node.Status.Conditions {
 		if taintMap, found := nodeConditionToTaintKeyStatusMap[condition.Type]; found {
@@ -694,6 +741,7 @@ func (nc *Controller) doNoScheduleTaintingPass(nodeName string) error {
 	}
 
 	// Get exist taints of node.
+	// dfy: 过滤并记录当前 node 已有的 taint
 	nodeTaints := taintutils.TaintSetFilter(node.Spec.Taints, func(t *v1.Taint) bool {
 		// only NoSchedule taints are candidates to be compared with "taints" later
 		if t.Effect != v1.TaintEffectNoSchedule {
@@ -707,11 +755,14 @@ func (nc *Controller) doNoScheduleTaintingPass(nodeName string) error {
 		_, found := taintKeyToNodeConditionMap[t.Key]
 		return found
 	})
+	// dfy: taints 中有，nodeTaints 无，新增
+	// dfy: taints 中无，nodeTaints 有，删除
 	taintsToAdd, taintsToDel := taintutils.TaintSetDiff(taints, nodeTaints)
 	// If nothing to add not delete, return true directly.
 	if len(taintsToAdd) == 0 && len(taintsToDel) == 0 {
 		return nil
 	}
+	// dfy: 更新 node 的 taint
 	if !nodeutil.SwapNodeControllerTaint(nc.kubeClient, taintsToAdd, taintsToDel, node) {
 		return fmt.Errorf("failed to swap taints of node %+v", node)
 	}
@@ -730,6 +781,8 @@ func (nc *Controller) doNoScheduleTaintingPass(nodeName string) error {
 //   添加“node.kubernetes.io/unreachable” 的taint，Effect为NoExecute。
 //
 //链接：https://juejin.cn/post/7130531136878411789
+// doNoExecuteTaintingPass just add NoExecute Taints to the Node.
+// The eviction is not executed here, and the eviction is handled separately in the TaintManager Run function.
 func (nc *Controller) doNoExecuteTaintingPass() {
 	nc.evictorLock.Lock()
 	defer nc.evictorLock.Unlock()
@@ -753,6 +806,7 @@ func (nc *Controller) doNoExecuteTaintingPass() {
 			switch condition.Status {
 			// dfy: not ready taint
 			case v1.ConditionFalse:
+				// dfy: 这几个模板都是 NoExecute Effect
 				taintToAdd = *NotReadyTaintTemplate
 				oppositeTaint = *UnreachableTaintTemplate
 				// dfy: unreachable taint
@@ -798,6 +852,7 @@ func (nc *Controller) doEvictionPass() {
 	for k := range nc.zonePodEvictor {
 		// Function should return 'false' and a time after which it should be retried, or 'true' if it shouldn't (it succeeded).
 		nc.zonePodEvictor[k].Try(func(value scheduler.TimedValue) (bool, time.Duration) {
+			// dfy: 此处 value.Value 存储的是 Cluster Name
 			node, err := nc.nodeLister.Get(value.Value)
 			if apierrors.IsNotFound(err) {
 				klog.Warningf("Node %v no longer present in nodeLister!", value.Value)
@@ -820,6 +875,7 @@ func (nc *Controller) doEvictionPass() {
 				utilruntime.HandleError(fmt.Errorf("unable to evict node %q: %v", value.Value, err))
 				return false, 0
 			}
+			// dfy: 在nodeEvictionMap设置node的状态为evicted
 			if !nc.nodeEvictionMap.setStatus(value.Value, evicted) {
 				klog.V(2).Infof("node %v was unregistered in the meantime - skipping setting status", value.Value)
 			}
@@ -894,13 +950,15 @@ func (nc *Controller) monitorNodeHealth() error {
 	}
 
 	zoneToNodeConditions := map[string][]*v1.NodeCondition{}
+	// dfy: 遍历所有 cluster，不论青红皂白，都尝试驱逐 Pod
 	for i := range nodes {
 		var gracePeriod time.Duration
 		var observedReadyCondition v1.NodeCondition
 		var currentReadyCondition *v1.NodeCondition
 		node := nodes[i].DeepCopy()
 		if err := wait.PollImmediate(retrySleepTime, retrySleepTime*scheduler.NodeHealthUpdateRetry, func() (bool, error) {
-			// dfy: 更新 node 的健康状态
+			// dfy: 记录 Node Condition 的变化
+			// dfy: 更新 node Status 的健康状态  重点！！！
 			gracePeriod, observedReadyCondition, currentReadyCondition, err = nc.tryUpdateNodeHealth(node)
 			if err == nil {
 				return true, nil
@@ -926,14 +984,17 @@ func (nc *Controller) monitorNodeHealth() error {
 		if currentReadyCondition != nil {
 			// dfy: 获取指定节点上的 pod
 			pods, err := nc.getPodsAssignedToNode(node.Name)
+			// dfy: 尝试获取 Pod 失败，因为可能在 Node 状态转变过程中(Ready -> NotReady)，需要标记该 Node 需要重试 clustersToRetry.Store
 			if err != nil {
 				utilruntime.HandleError(fmt.Errorf("unable to list pods of node %v: %v", node.Name, err))
 				if currentReadyCondition.Status != v1.ConditionTrue && observedReadyCondition.Status == v1.ConditionTrue {
 					// If error happened during node status transition (Ready -> NotReady)
 					// we need to mark node for retry to force MarkPodsNotReady execution
 					// in the next iteration.
+					// dfy： node 状态转换失败(Ready -> NotReady)，需要重新尝试
 					nc.nodesToRetry.Store(node.Name, struct{}{})
 				}
+				// dfy: Node 状态异常，跳出此次判断
 				continue
 			}
 			// dfy: 若 runTaintManager 为 true ，
@@ -947,14 +1008,16 @@ func (nc *Controller) monitorNodeHealth() error {
 				}
 			}
 
+			// dfy: nodesToRetry 什么作用？
 			_, needsRetry := nc.nodesToRetry.Load(node.Name)
 			switch {
 			// dfy: 就记录个 event？
 			case currentReadyCondition.Status != v1.ConditionTrue && observedReadyCondition.Status == v1.ConditionTrue:
 				// Report node event only once when status changed.
 				nodeutil.RecordNodeStatusChange(nc.recorder, node, "NodeNotReady")
-				fallthrough // 这个是什么意思？
+				fallthrough // 继续执行下一个 case
 			case needsRetry && observedReadyCondition.Status != v1.ConditionTrue: // dfy: 二次尝试？ 标记 pod not ready？
+				// dfy： 更新该 node 上的所有 pod  condition 为 NotReady
 				if err = nodeutil.MarkPodsNotReady(nc.kubeClient, nc.recorder, pods, node.Name); err != nil {
 					utilruntime.HandleError(fmt.Errorf("unable to mark all pods NotReady on node %v: %v; queuing for retry", node.Name, err))
 					nc.nodesToRetry.Store(node.Name, struct{}{})
@@ -962,6 +1025,7 @@ func (nc *Controller) monitorNodeHealth() error {
 				}
 			}
 		}
+		// dfy: nodesToRetry 什么作用？
 		nc.nodesToRetry.Delete(node.Name)
 	}
 	// dfy: 解决冲突？
@@ -978,6 +1042,9 @@ func (nc *Controller) processTaintBaseEviction(node *v1.Node, observedReadyCondi
 	case v1.ConditionFalse:
 		// We want to update the taint straight away if Node is already tainted with the UnreachableTaint
 		// dfy: 如果 Node 已经被 UnreachableTaint 污染，我们希望立即更新污染
+		// node最后发现ReadyCondition为false，如果已经有“node.kubernetes.io/unreachable”的taint，将该taint删除，
+		// 添加“node.kubernetes.io/not-ready” 的taint。否则将node添加到zoneNoExecuteTainter队列中，等待添加taint。
+
 		if taintutils.TaintExists(node.Spec.Taints, UnreachableTaintTemplate) { // 具有 UnreachableTaint 就打上 NotReadyTaint, 并立即更新
 			taintToAdd := *NotReadyTaintTemplate
 			// dfy: 立即更新 taints
@@ -1036,7 +1103,7 @@ func (nc *Controller) processNoTaintBaseEviction(node *v1.Node, observedReadyCon
 	// Check eviction timeout against decisionTimestamp
 	switch observedReadyCondition.Status {
 	case v1.ConditionFalse:
-		// dfy: 在 readyTransitionTimestamp + podEvictionTimeout 时间后，驱逐该 node 上的 pod
+		// dfy: 在 readyTransitionTimestamp + podEvictionTimeout 时间后，驱逐该 pod
 		if decisionTimestamp.After(nodeHealthData.readyTransitionTimestamp.Add(nc.podEvictionTimeout)) {
 			// dfy: 将 node 放入到待驱逐队列
 			enqueued, err := nc.evictPods(node, pods) // dfy: 驱逐 pod 逻辑，待看
@@ -1081,6 +1148,8 @@ const labelNodeDisruptionExclusion = "node.kubernetes.io/exclude-disruption"
 
 func isNodeExcludedFromDisruptionChecks(node *v1.Node) bool {
 	// DEPRECATED: will be removed in 1.19
+	// dfy: kubefeatures 这个包里，定义 特性开关有哪些
+	// dfy: utilfeature 这个包里是一些辅助函数，如判断某个特性开关是否开启
 	if utilfeature.DefaultFeatureGate.Enabled(kubefeatures.LegacyNodeRoleBehavior) {
 		if legacyIsMasterNode(node.Name) {
 			return true
@@ -1166,6 +1235,16 @@ func (nc *Controller) tryUpdateNodeHealth(node *v1.Node) (time.Duration, v1.Node
 	//   - if 'LastProbeTime' have gone back in time its probably an error, currently we ignore it,
 	//   - currently only correct Ready State transition outside of Node Controller is marking it ready by Kubelet, we don't check
 	//     if that's the case, but it does not seem necessary.
+	// dfy:
+	// nodeHealth 记录 node Status 相关信息
+	// 其中 probeTimestamp 是探测时间，readyTransitionTimestamp 是 ReadyCondition 转换时间
+	// 下面分为几个判断：
+	// - 没有旧状态 nodeHealth == nil ，因此时间都为 now
+	// - 新旧状态不一致， savedCondition == nil && currentReadyCondition != nil，新状态具有 ReadyCondition, 更新事件都为 now
+	// - 新旧状态不一致，savedCondition != nil && currentReadyCondition == nil，新状态没有 ReadyCondition，也进行时间的更新
+	// - 新旧状态都具有 ReadyCondition 但是 心跳时间不一致 LastHeartbeatTime 不一致
+	//   a. readyTransitionTimestamp 状态转换时间不一致，更新为 now
+	//   b. readyTransitionTimestamp 状态转换时间一直，就不改动
 	var savedCondition *v1.NodeCondition
 	var savedLease *coordv1.Lease
 	if nodeHealth != nil {
@@ -1220,6 +1299,7 @@ func (nc *Controller) tryUpdateNodeHealth(node *v1.Node) (time.Duration, v1.Node
 	// Note: If kubelet never posted the node status, but continues renewing the
 	// heartbeat leases, the node controller will assume the node is healthy and
 	// take no action.
+	// dfy: 根据 lease 的 renew 时间，更新探测时间
 	observedLease, _ := nc.leaseLister.Leases(v1.NamespaceNodeLease).Get(node.Name)
 	if observedLease != nil && (savedLease == nil || savedLease.Spec.RenewTime.Before(observedLease.Spec.RenewTime)) {
 		nodeHealth.lease = observedLease
@@ -1385,9 +1465,11 @@ func (nc *Controller) handleDisruption(zoneToNodeConditions map[string][]*v1.Nod
 }
 
 func (nc *Controller) podUpdated(oldPod, newPod *v1.Pod) {
+	// dfy: Pod 删除，忽略
 	if newPod == nil {
 		return
 	}
+	// Pod 首次创建，或 Pod NodeName 改变，放入到队列
 	if len(newPod.Spec.NodeName) != 0 && (oldPod == nil || newPod.Spec.NodeName != oldPod.Spec.NodeName) {
 		podItem := podUpdateItem{newPod.Namespace, newPod.Name}
 		nc.podUpdateQueue.Add(podItem)
@@ -1417,9 +1499,9 @@ func (nc *Controller) doPodProcessingWorker() {
 }
 
 // processPod is processing events of assigning pods to nodes. In particular:
-// 1. for NodeReady=true node, taint eviction for this pod will be cancelled
-// 2. for NodeReady=false or unknown node, taint eviction of pod will happen and pod will be marked as not ready
-// 3. if node doesn't exist in cache, it will be skipped and handled later by doEvictionPass
+// 1. for NodeReady=true node, taint eviction for this pod will be cancelled  驱逐取消
+// 2. for NodeReady=false or unknown node, taint eviction of pod will happen and pod will be marked as not ready  pod 标记为 not ready
+// 3. if node doesn't exist in cache, it will be skipped and handled later by doEvictionPass  node不在缓存，之后通过 doEvictionPass 处理
 func (nc *Controller) processPod(podItem podUpdateItem) {
 	defer nc.podUpdateQueue.Done(podItem)
 	pod, err := nc.podLister.Pods(podItem.namespace).Get(podItem.name)
@@ -1449,6 +1531,7 @@ func (nc *Controller) processPod(podItem podUpdateItem) {
 		return
 	}
 
+	// dfy: 获取 node 健康状态
 	_, currentReadyCondition := nodeutil.GetNodeCondition(nodeHealth.status, v1.NodeReady)
 	if currentReadyCondition == nil {
 		// Lack of NodeReady condition may only happen after node addition (or if it will be maliciously deleted).
@@ -1461,7 +1544,7 @@ func (nc *Controller) processPod(podItem podUpdateItem) {
 	// In taint-based eviction mode, only node updates are processed by NodeLifecycleController.
 	// Pods are processed by TaintManager.
 	if !nc.runTaintManager {
-		// dfy: 没有 Taint 是的处理方式，等待 podEvictionTimeout 时间，将 pod 加入待驱逐队列
+		// dfy: 没有 Taint 时的处理方式，等待 podEvictionTimeout 时间，将 pod 加入待驱逐队列
 		if err := nc.processNoTaintBaseEviction(node, currentReadyCondition, nc.nodeMonitorGracePeriod, pods); err != nil {
 			klog.Warningf("Unable to process pod %+v eviction from node %v: %v.", podItem, nodeName, err)
 			nc.podUpdateQueue.AddRateLimited(podItem)
@@ -1470,6 +1553,7 @@ func (nc *Controller) processPod(podItem podUpdateItem) {
 	}
 
 	if currentReadyCondition.Status != v1.ConditionTrue {
+		// dfy: 更新 Pod 状态，之后 pod informer 应该会捕获此事件，放入到对应的 workqueue
 		if err := nodeutil.MarkPodsNotReady(nc.kubeClient, nc.recorder, pods, nodeName); err != nil {
 			klog.Warningf("Unable to mark pod %+v NotReady on node %v: %v.", podItem, nodeName, err)
 			nc.podUpdateQueue.AddRateLimited(podItem)
@@ -1477,6 +1561,7 @@ func (nc *Controller) processPod(podItem podUpdateItem) {
 	}
 }
 
+// dfy: 根据该 zone 健康状态（也就是健康比例），设置驱逐效率(频率）
 func (nc *Controller) setLimiterInZone(zone string, zoneSize int, state ZoneState) {
 	switch state {
 	case stateNormal:
@@ -1554,10 +1639,12 @@ func (nc *Controller) ReducedQPSFunc(nodeNum int) float32 {
 }
 
 // addPodEvictorForNewZone checks if new zone appeared, and if so add new evictor.
+// dfy: 若出现新的 zone ，初始化 zonePodEvictor 或 zoneNoExecuteTainter
 func (nc *Controller) addPodEvictorForNewZone(node *v1.Node) {
 	nc.evictorLock.Lock()
 	defer nc.evictorLock.Unlock()
 	zone := utilnode.GetZoneKey(node)
+	// dfy: 若出现新的 zone ，初始化 zonePodEvictor 或 zoneNoExecuteTainter
 	if _, found := nc.zoneStates[zone]; !found {
 		// dfy: 没有找到 zone value，设置为 Initial
 		nc.zoneStates[zone] = stateInitial
@@ -1609,6 +1696,7 @@ func (nc *Controller) evictPods(node *v1.Node, pods []*v1.Pod) (bool, error) {
 	nc.evictorLock.Lock()
 	defer nc.evictorLock.Unlock()
 	status, ok := nc.nodeEvictionMap.getStatus(node.Name)
+	// dfy: 若该 node 已经清理过，那么新来的 pod 直接清理就好
 	if ok && status == evicted {
 		// Node eviction already happened for this node.
 		// Handling immediate pod deletion.
@@ -1621,7 +1709,7 @@ func (nc *Controller) evictPods(node *v1.Node, pods []*v1.Pod) (bool, error) {
 	if !nc.nodeEvictionMap.setStatus(node.Name, toBeEvicted) {
 		klog.V(2).Infof("node %v was unregistered in the meantime - skipping setting status", node.Name)
 	}
-	// dfy: 将 node 放入到待驱逐队列？
+	// dfy: 将 node 放入到待驱逐队列？ —— 是的，之后将该 node 上的 pod 统一全部清理
 	return nc.zonePodEvictor[utilnode.GetZoneKey(node)].Add(node.Name, string(node.UID)), nil
 }
 

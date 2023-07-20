@@ -575,6 +575,7 @@ func MemoryPressureCondition(nowFunc func() time.Time, // typically Kubelet.cloc
 			}
 		}
 
+		// dfy: 首次 为 Node 添加上 MemoryPressure = Unknown 的 Condition
 		newCondition := false
 		// If the NodeMemoryPressure condition doesn't exist, create one
 		if condition == nil {
@@ -591,12 +592,14 @@ func MemoryPressureCondition(nowFunc func() time.Time, // typically Kubelet.cloc
 		// Update the heartbeat time
 		condition.LastHeartbeatTime = currentTime
 
+		// dfy: 之后会判别 Node 是否处于 内存压力中，并更改 MemoryPressure Condition 为对应的状态
 		// Note: The conditions below take care of the case when a new NodeMemoryPressure condition is
 		// created and as well as the case when the condition already exists. When a new condition
 		// is created its status is set to v1.ConditionUnknown which matches either
 		// condition.Status != v1.ConditionTrue or
 		// condition.Status != v1.ConditionFalse in the conditions below depending on whether
 		// the kubelet is under memory pressure or not.
+		// dfy: pressureFunc 是判断是否处于 内存压力 中，此处对应 Kubelet.evictionManager.IsUnderMemoryPressure 函数
 		if pressureFunc() {
 			if condition.Status != v1.ConditionTrue {
 				condition.Status = v1.ConditionTrue

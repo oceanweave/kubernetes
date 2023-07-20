@@ -64,6 +64,7 @@ const (
 
 func alwaysReady() bool { return true }
 
+// dfy: 获取 node 上的 所有 Pod
 func fakeGetPodsAssignedToNode(c *fake.Clientset) func(string) ([]*v1.Pod, error) {
 	return func(nodeName string) ([]*v1.Pod, error) {
 		selector := fields.SelectorFromSet(fields.Set{"spec.nodeName": nodeName})
@@ -90,6 +91,7 @@ type nodeLifecycleController struct {
 }
 
 // doEviction does the fake eviction and returns the status of eviction operation.
+// dfy: 模拟 pod 驱逐
 func (nc *nodeLifecycleController) doEviction(fakeNodeHandler *testutil.FakeNodeHandler) bool {
 	nc.evictorLock.Lock()
 	defer nc.evictorLock.Unlock()
@@ -112,6 +114,7 @@ func (nc *nodeLifecycleController) doEviction(fakeNodeHandler *testutil.FakeNode
 	return false
 }
 
+// dfy: 创建 NodeLease
 func createNodeLease(nodeName string, renewTime metav1.MicroTime) *coordv1.Lease {
 	return &coordv1.Lease{
 		ObjectMeta: metav1.ObjectMeta{
@@ -125,15 +128,18 @@ func createNodeLease(nodeName string, renewTime metav1.MicroTime) *coordv1.Lease
 	}
 }
 
+// dfy: 同步 LeaseStore
 func (nc *nodeLifecycleController) syncLeaseStore(lease *coordv1.Lease) error {
 	if lease == nil {
 		return nil
 	}
+	// 模拟新数据
 	newElems := make([]interface{}, 0, 1)
 	newElems = append(newElems, lease)
 	return nc.leaseInformer.Informer().GetStore().Replace(newElems, "newRV")
 }
 
+// dfy: 同步 NodeStore
 func (nc *nodeLifecycleController) syncNodeStore(fakeNodeHandler *testutil.FakeNodeHandler) error {
 	nodes, err := fakeNodeHandler.List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
