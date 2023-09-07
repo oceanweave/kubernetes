@@ -1195,6 +1195,9 @@ func (nc *Controller) tryUpdateNodeHealth(node *v1.Node) (time.Duration, v1.Node
 	var observedReadyCondition v1.NodeCondition
 	// dfy: 判断当前这个 node 是否具有 Ready  condition，一个 node 可以有多中 condition  如 MemoryPressure  DiskPressure Ready 等
 	_, currentReadyCondition := nodeutil.GetNodeCondition(&node.Status, v1.NodeReady)
+	// dfy:
+	// - node ready condition 为空，表示此 node 第一次启动，容忍失联时间稍微长一些 gracePeriod = nc.nodeStartupGracePeriod (60s)
+	// - node ready condition 不为空，表示此 node 不是第一次启动，容忍失联时间稍微短一些 gracePeriod = nc.nodeMonitorGracePeriod (40s)
 	if currentReadyCondition == nil {
 		// If ready condition is nil, then kubelet (or nodecontroller) never posted node status.
 		// A fake ready condition is created, where LastHeartbeatTime and LastTransitionTime is set
@@ -1247,26 +1250,27 @@ func (nc *Controller) tryUpdateNodeHealth(node *v1.Node) (time.Duration, v1.Node
 	//   b. readyTransitionTimestamp 状态转换时间一直，就不改动
 	var savedCondition *v1.NodeCondition
 	var savedLease *coordv1.Lease
+	// dfy: 0. 获取 nodeHealth 记录的以往 node 的状态，用于下面对比，来进行更新
 	if nodeHealth != nil {
 		_, savedCondition = nodeutil.GetNodeCondition(nodeHealth.status, v1.NodeReady)
 		savedLease = nodeHealth.lease
 	}
 
-	if nodeHealth == nil {
+	if nodeHealth == nil { // dfy: 1. 若以往状态为空，此次进行构建
 		klog.Warningf("Missing timestamp for Node %s. Assuming now as a timestamp.", node.Name)
 		nodeHealth = &nodeHealthData{
 			status:                   &node.Status,
 			probeTimestamp:           nc.now(),
 			readyTransitionTimestamp: nc.now(),
 		}
-	} else if savedCondition == nil && currentReadyCondition != nil {
+	} else if savedCondition == nil && currentReadyCondition != nil { // dfy: 2. currentReadyCondition 新增，若以往 nodeHealth 未记录 Condition，现在 node 具有 Condition，那么更新nodeHealth 记录
 		klog.V(1).Infof("Creating timestamp entry for newly observed Node %s", node.Name)
 		nodeHealth = &nodeHealthData{
 			status:                   &node.Status,
 			probeTimestamp:           nc.now(),
 			readyTransitionTimestamp: nc.now(),
 		}
-	} else if savedCondition != nil && currentReadyCondition == nil {
+	} else if savedCondition != nil && currentReadyCondition == nil { // dfy: 3. currentReadyCondition 删除，若以往 nodeHealth 记录 Condition，现在 node 没有 Condition，那么更新 nodeHealth 记录
 		klog.Errorf("ReadyCondition was removed from Status of Node %s", node.Name)
 		// TODO: figure out what to do in this case. For now we do the same thing as above.
 		nodeHealth = &nodeHealthData{
@@ -1275,10 +1279,11 @@ func (nc *Controller) tryUpdateNodeHealth(node *v1.Node) (time.Duration, v1.Node
 			readyTransitionTimestamp: nc.now(),
 		}
 	} else if savedCondition != nil && currentReadyCondition != nil && savedCondition.LastHeartbeatTime != currentReadyCondition.LastHeartbeatTime {
+		// dfy: 4. currentReadyCondition 删除，若以往和现在都具有 ReadyCondition，但上一次心跳时间不同 LastHeartbeatTime，需要更新 nodeHealth 记录
 		var transitionTime metav1.Time
 		// If ReadyCondition changed since the last time we checked, we update the transition timestamp to "now",
 		// otherwise we leave it as it is.
-		if savedCondition.LastTransitionTime != currentReadyCondition.LastTransitionTime {
+		if savedCondition.LastTransitionTime != currentReadyCondition.LastTransitionTime { // dfy: 4.1 此处表示 LastTransitionTime 发生了变化
 			klog.V(3).Infof("ReadyCondition for Node %s transitioned from %v to %v", node.Name, savedCondition, currentReadyCondition)
 			transitionTime = nc.now()
 		} else {
@@ -1299,13 +1304,14 @@ func (nc *Controller) tryUpdateNodeHealth(node *v1.Node) (time.Duration, v1.Node
 	// Note: If kubelet never posted the node status, but continues renewing the
 	// heartbeat leases, the node controller will assume the node is healthy and
 	// take no action.
-	// dfy: 根据 lease 的 renew 时间，更新探测时间
+	// dfy: 5. 通过 lease 更新，来更新 probeTimestamp
 	observedLease, _ := nc.leaseLister.Leases(v1.NamespaceNodeLease).Get(node.Name)
 	if observedLease != nil && (savedLease == nil || savedLease.Spec.RenewTime.Before(observedLease.Spec.RenewTime)) {
 		nodeHealth.lease = observedLease
 		nodeHealth.probeTimestamp = nc.now()
 	}
 
+	// dfy: 注意此处， Lease 没更新，导致 probeTimestamp 没变动，因此 现在时间超过了容忍时间，将此 Node 视作失联 Node
 	if nc.now().After(nodeHealth.probeTimestamp.Add(gracePeriod)) {
 		// NodeReady condition or lease was last set longer ago than gracePeriod, so
 		// update it to Unknown (regardless of its current value) in the master.
@@ -1366,11 +1372,14 @@ func (nc *Controller) tryUpdateNodeHealth(node *v1.Node) (time.Duration, v1.Node
 	return gracePeriod, observedReadyCondition, currentReadyCondition, nil
 }
 
+// dfy： 1. 计算 zone 不健康程度； 2. 根据 zone 不健康程度设置不同的驱逐速率
 func (nc *Controller) handleDisruption(zoneToNodeConditions map[string][]*v1.NodeCondition, nodes []*v1.Node) {
 	newZoneStates := map[string]ZoneState{}
 	allAreFullyDisrupted := true
 	for k, v := range zoneToNodeConditions {
 		zoneSize.WithLabelValues(k).Set(float64(len(v)))
+		// dfy: 计算该 zone 的不健康程度（就是失联 node 的占比）
+		// nc.computeZoneStateFunc = nc.ComputeZoneState
 		unhealthy, newState := nc.computeZoneStateFunc(v)
 		zoneHealth.WithLabelValues(k).Set(float64(100*(len(v)-unhealthy)) / float64(len(v)))
 		unhealthyNodes.WithLabelValues(k).Set(float64(unhealthy))
@@ -1445,6 +1454,7 @@ func (nc *Controller) handleDisruption(zoneToNodeConditions map[string][]*v1.Nod
 			}
 			// We reset all rate limiters to settings appropriate for the given state.
 			for k := range nc.zoneStates {
+				// dfy: 设置 zone 的驱逐速率
 				nc.setLimiterInZone(k, len(zoneToNodeConditions[k]), newZoneStates[k])
 				nc.zoneStates[k] = newZoneStates[k]
 			}
@@ -1458,6 +1468,7 @@ func (nc *Controller) handleDisruption(zoneToNodeConditions map[string][]*v1.Nod
 				continue
 			}
 			klog.V(0).Infof("Controller detected that zone %v is now in state %v.", k, newState)
+			// dfy: 设置 zone 的驱逐速率
 			nc.setLimiterInZone(k, len(zoneToNodeConditions[k]), newState)
 			nc.zoneStates[k] = newState
 		}
