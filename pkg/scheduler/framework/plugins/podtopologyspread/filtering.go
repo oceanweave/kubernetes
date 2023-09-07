@@ -161,10 +161,13 @@ func (s *preFilterState) updateWithPod(updatedPod, preemptorPod *v1.Pod, node *v
 // PreFilter invoked at the prefilter extension point.
 func (pl *PodTopologySpread) PreFilter(ctx context.Context, cycleState *framework.CycleState, pod *v1.Pod) *framework.Status {
 	// dfy: 此处只考虑策略为 DoNotSchedule 的 constraints
+	// dfy: 此处计算满足 PodTopologySpread 约束的情况，符合要求的 Node 上有多少个 Pod
 	s, err := pl.calPreFilterState(pod)
 	if err != nil {
 		return framework.NewStatus(framework.Error, err.Error())
 	}
+	// dfy: 写入到公共结构体中，用于传输，可以理解 cycleState 为全局变量
+	// s 参数就是返回的梳理后的数据关系
 	cycleState.Write(preFilterStateKey, s)
 	return nil
 }
@@ -347,6 +350,7 @@ func (pl *PodTopologySpread) Filter(ctx context.Context, cycleState *framework.C
 		tpVal, ok := node.Labels[c.TopologyKey]
 		if !ok {
 			klog.V(5).Infof("node '%s' doesn't have required label '%s'", node.Name, tpKey)
+			// dfy: 此 Node 没有通过该 Filter 的筛选，返回错误及原因
 			return framework.NewStatus(framework.UnschedulableAndUnresolvable, ErrReasonNodeLabelNotMatch)
 		}
 
@@ -376,11 +380,13 @@ func (pl *PodTopologySpread) Filter(ctx context.Context, cycleState *framework.C
 		skew := matchNum + selfMatchNum - minMatchNum
 		// dfy: 不满足倾斜度要求，说明当前 Pod 不能符合此 constraints，不能调度到当前 Node 上
 		if skew > c.MaxSkew {
+			// dfy: 此 Node 没有通过该 Filter 的筛选，返回错误及原因
 			klog.V(5).Infof("node '%s' failed spreadConstraint[%s]: MatchNum(%d) + selfMatchNum(%d) - minMatchNum(%d) > maxSkew(%d)", node.Name, tpKey, matchNum, selfMatchNum, minMatchNum, c.MaxSkew)
 			return framework.NewStatus(framework.Unschedulable, ErrReasonConstraintsNotMatch)
 		}
 	}
 
+	// dfy: 此 Node 通过 Filter 的筛选，什么都没返回
 	return nil
 }
 

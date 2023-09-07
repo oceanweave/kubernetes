@@ -24,6 +24,7 @@ import (
 // Extender is an interface for external processes to influence scheduling
 // decisions made by Kubernetes. This is typically needed for resources not directly
 // managed by Kubernetes.
+// dfy: 此处是 Scheduler Extender 接口定义，定义了一些可实现的方法
 type Extender interface {
 	// Name returns a unique name that identifies the extender.
 	Name() string

@@ -104,6 +104,10 @@ func (c *CycleState) Read(key StateKey) (StateData, error) {
 // Write stores the given "val" in CycleState with the given "key".
 // This function is not thread safe. In multi-threaded code, lock should be
 // acquired first.
+// dfy：
+// - key 为不同插件的名称
+// - value 为不同插件梳理的数据结构关系，但是每个插件的梳理数据结构都不一致，如何进行下面统一处理?
+//   没关系，StateData 是 interface 结构，只包含 Clone 函数，只要梳理的数据结构实现了 Clone 方法即可
 func (c *CycleState) Write(key StateKey, val StateData) {
 	c.storage[key] = val
 }

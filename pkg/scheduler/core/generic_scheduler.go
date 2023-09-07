@@ -315,6 +315,11 @@ func (g *genericScheduler) findNodesThatFitPod(ctx context.Context, prof *profil
 }
 
 // findNodesThatPassFilters finds the nodes that fit the filter plugins.
+// 1. numFeasibleNodesToFind 返回需要找到合适 node 的数量 numNodesToFind（若集群过大 1000 节点，但只需要 1 个，即使有100个符合条件，那么筛选10个也够挑选的）
+// 2. checkNode 中主要是 PodPassesFiltersOnNode 函数，PodPassesFiltersOnNode 会调用注册所有插件的 Filter 函数，每个 Filter 函数会返回对应的处理结果
+// 		返回结果执行 Merge 操作，status = statusMap.Merge()，只要有一个 Filter 不可用，就会返回该 Node 不可用
+// 3. parallelize.Until(ctx, len(allNodes), checkNode) 对所有 Node 逐个检验，判断 Node 是否满足条件可用
+// 4. 上一步发现可用的 Node 会填充到 feasibleNodes 数组中（feasibleNodes := make([]*v1.Node, numNodesToFind)），填充满了，便不再筛选 Pod 直接返回
 func (g *genericScheduler) findNodesThatPassFilters(ctx context.Context, prof *profile.Profile, state *framework.CycleState, pod *v1.Pod, statuses framework.NodeToStatusMap) ([]*v1.Node, error) {
 	allNodes, err := g.nodeInfoSnapshot.NodeInfos().List()
 	if err != nil {
