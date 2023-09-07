@@ -115,6 +115,8 @@ func (c *Configurator) create() (*Scheduler, error) {
 		var ignorableExtenders []framework.Extender
 		for ii := range c.extenders {
 			klog.V(2).Infof("Creating extender with config %+v", c.extenders[ii])
+			// dfy: 创建 extender 的 http 端
+			// dfy: 此处包含 Extender Plugin Policy 文件的读取，读取 Policy 关注的资源，并创建对应的 extender 对象
 			extender, err := core.NewHTTPExtender(&c.extenders[ii])
 			if err != nil {
 				return nil, err
@@ -124,6 +126,7 @@ func (c *Configurator) create() (*Scheduler, error) {
 			} else {
 				ignorableExtenders = append(ignorableExtenders, extender)
 			}
+			// dfy: 判断 extender 管理的资源，是否有需要忽略的
 			for _, r := range c.extenders[ii].ManagedResources {
 				if r.IgnoredByScheduler {
 					ignoredExtendedResources = append(ignoredExtendedResources, r.Name)
@@ -184,6 +187,7 @@ func (c *Configurator) create() (*Scheduler, error) {
 	algo := core.NewGenericScheduler(
 		c.schedulerCache,
 		c.nodeInfoSnapshot,
+		// dfy: extender 调度插件信息
 		extenders,
 		c.informerFactory.Core().V1().PersistentVolumeClaims().Lister(),
 		c.disablePreemption,
@@ -218,6 +222,7 @@ func (c *Configurator) createFromProvider(providerName string) (*Scheduler, erro
 		prof.Plugins = plugins
 	}
 	// dfy: 包含创建 scheduler profile（就是用于调度插件的注册和执行）
+	// dfy: 此处包含 Extender Plugin Policy 文件的读取，读取 Policy 关注的资源，并创建对应的 extender 对象
 	return c.create()
 }
 
@@ -318,6 +323,7 @@ func (c *Configurator) createFromConfig(policy schedulerapi.Policy) (*Scheduler,
 	}
 
 	// dfy: 包含创建 scheduler profile（就是用于调度插件的注册和执行）
+	// dfy: 此处包含 Extender Plugin Policy 文件的读取，读取 Policy 关注的资源，并创建对应的 extender 对象
 	return c.create()
 }
 

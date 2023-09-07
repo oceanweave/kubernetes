@@ -372,6 +372,7 @@ type Extender struct {
 	// - If IgnoredByScheduler is set to true for a resource, kube-scheduler
 	//   will skip checking the resource in predicates.
 	// +optional
+	// dfy: 此处就 Extender 关注哪些资源
 	ManagedResources []ExtenderManagedResource
 	// Ignorable specifies if the extender is ignorable, i.e. scheduling should not
 	// fail when the extender returns an error or is not reachable.

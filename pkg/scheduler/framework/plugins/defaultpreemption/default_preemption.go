@@ -146,6 +146,7 @@ func (pl *DefaultPreemption) preempt(ctx context.Context, state *framework.Cycle
 	// dfy: 3. 如果需要，与注册的 Extenders 交互来找出候选人（可选，该http extender 需要实现 ProcessPreemption 方法）
 	// dfy: CallExtenders 通过 Extender 来选择可行的 feasible candidates, 我们只是使用支持抢占的 extender 俩检查 candidte
 	// dfy： 不支持抢占的 extenders 可能或阻止 抢占器preemptor 调度到指定 node，在这种情况下，调度器将会在后续调度周期为 抢占器 preemptor 寻找一个其他的 host
+	// dfy: 此处是 extender Plugin 辅助抢占，来寻找候选人？
 	candidates, err = CallExtenders(ph.Extenders(), pod, nodeLister, candidates)
 	if err != nil {
 		return "", err
@@ -323,9 +324,11 @@ func CallExtenders(extenders []framework.Extender, pod *v1.Pod, nodeLister frame
 		return candidates, nil
 	}
 	for _, extender := range extenders {
+		// dfy: 判断该 pod 内配置的资源信息，extender 插件是否关注，IsInterested 返回 true 表示关注
 		if !extender.SupportsPreemption() || !extender.IsInterested(pod) {
 			continue
 		}
+		// dfy: extender 的 抢占调度逻辑
 		nodeNameToVictims, err := extender.ProcessPreemption(pod, victimsMap, nodeLister)
 		if err != nil {
 			if extender.IsIgnorable() {

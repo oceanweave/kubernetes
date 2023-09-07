@@ -231,6 +231,7 @@ func New(client clientset.Interface,
 	case source.Provider != nil:
 		// Create the config from a named algorithm provider.
 		// dfy: 包含创建 scheduler profile（就是用于调度插件的注册和执行）
+		// dfy: 此处包含 Extender Plugin Policy 文件的读取，读取 Policy 关注的资源，并创建对应的 extender 对象
 		sc, err := configurator.createFromProvider(*source.Provider)
 		if err != nil {
 			return nil, fmt.Errorf("couldn't create scheduler using provider %q: %v", *source.Provider, err)
@@ -239,6 +240,7 @@ func New(client clientset.Interface,
 	case source.Policy != nil:
 		// Create the config from a user specified policy source.
 		policy := &schedulerapi.Policy{}
+		// dfy: 下面是读取 Scheduler Policy，包含 Extender 调度插件的一些配置
 		switch {
 		case source.Policy.File != nil:
 			if err := initPolicyFromFile(source.Policy.File.Path, policy); err != nil {
@@ -254,6 +256,7 @@ func New(client clientset.Interface,
 		// which would have set extenders in the above instantiation of Configurator from CC options)
 		configurator.extenders = policy.Extenders
 		// dfy: 包含创建 scheduler profile（就是用于调度插件的注册和执行）
+		// dfy: 此处包含 Extender Plugin Policy 文件的读取，读取 Policy 关注的资源，并创建对应的 extender 对象
 		sc, err := configurator.createFromConfig(*policy)
 		if err != nil {
 			return nil, fmt.Errorf("couldn't create scheduler from policy: %v", err)
@@ -408,6 +411,7 @@ func (sched *Scheduler) bind(ctx context.Context, prof *profile.Profile, assumed
 
 	// dfy: 额外的 extender 绑定处理，不太清除此处作用，需要再看看
 	// todo: 需要再看看
+	// dfy: 此部分判断 extender 是否关注 pod 的资源，若关注，就调度 extender 的 Bind 函数
 	bound, err := sched.extendersBinding(assumed, targetNode)
 	if bound {
 		return err
@@ -426,9 +430,11 @@ func (sched *Scheduler) bind(ctx context.Context, prof *profile.Profile, assumed
 // TODO(#87159): Move this to a Plugin.
 func (sched *Scheduler) extendersBinding(pod *v1.Pod, node string) (bool, error) {
 	for _, extender := range sched.Algorithm.Extenders() {
+		// dfy: 判断该 pod 内配置的资源信息，extender 插件是否关注，IsInterested 返回 true 表示关注
 		if !extender.IsBinder() || !extender.IsInterested(pod) {
 			continue
 		}
+		// dfy: 此部分调度 extender Plugin 的 Bind 函数
 		return true, extender.Bind(&v1.Binding{
 			ObjectMeta: metav1.ObjectMeta{Namespace: pod.Namespace, Name: pod.Name, UID: pod.UID},
 			Target:     v1.ObjectReference{Kind: "Node", Name: node},

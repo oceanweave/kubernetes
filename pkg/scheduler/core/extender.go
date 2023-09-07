@@ -97,9 +97,11 @@ func NewHTTPExtender(config *schedulerapi.Extender) (framework.Extender, error) 
 		Timeout:   config.HTTPTimeout.Duration,
 	}
 	managedResources := sets.NewString()
+	// dfy: extender 插件关注的资源信息
 	for _, r := range config.ManagedResources {
 		managedResources.Insert(string(r.Name))
 	}
+	// dfy: 创建 extender 对象
 	return &HTTPExtender{
 		extenderURL:      config.URLPrefix,
 		preemptVerb:      config.PreemptVerb,
@@ -109,6 +111,7 @@ func NewHTTPExtender(config *schedulerapi.Extender) (framework.Extender, error) 
 		weight:           config.Weight,
 		client:           client,
 		nodeCacheCapable: config.NodeCacheCapable,
+		// dfy: 存储在 managedResources 字段中
 		managedResources: managedResources,
 		ignorable:        config.Ignorable,
 	}, nil
@@ -441,13 +444,16 @@ func (h *HTTPExtender) send(action string, args interface{}, result interface{})
 
 // IsInterested returns true if at least one extended resource requested by
 // this pod is managed by this extender.
+// dfy：判断 extender 是否关注 容器内的某资源信息
 func (h *HTTPExtender) IsInterested(pod *v1.Pod) bool {
 	if h.managedResources.Len() == 0 {
 		return true
 	}
+	// dfy: 判断 extender 是否关注 pod 内 container 的资源信息
 	if h.hasManagedResources(pod.Spec.Containers) {
 		return true
 	}
+	// dfy: 判断 extender 是否关注 pod 内 initcontainer 的资源信息
 	if h.hasManagedResources(pod.Spec.InitContainers) {
 		return true
 	}
@@ -457,6 +463,7 @@ func (h *HTTPExtender) IsInterested(pod *v1.Pod) bool {
 func (h *HTTPExtender) hasManagedResources(containers []v1.Container) bool {
 	for i := range containers {
 		container := &containers[i]
+		// dfy：判断 extender 是否关注 容器内的此资源信息
 		for resourceName := range container.Resources.Requests {
 			if h.managedResources.Has(string(resourceName)) {
 				return true

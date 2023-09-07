@@ -307,6 +307,7 @@ func (g *genericScheduler) findNodesThatFitPod(ctx context.Context, prof *profil
 	}
 
 	// dfy: 记录通过 extender Filter 筛选的 node list；将上一步筛选得到的 feasibleNodes 进行再一次筛选
+	// dfy: 若 extender 关注此 pod 中的资源，那么便执行 extender 的 Filter 函数
 	feasibleNodes, err = g.findNodesThatPassExtenders(pod, feasibleNodes, filteredNodesStatuses)
 	if err != nil {
 		return nil, nil, err
@@ -410,9 +411,11 @@ func (g *genericScheduler) findNodesThatPassExtenders(pod *v1.Pod, feasibleNodes
 		if len(feasibleNodes) == 0 {
 			break
 		}
+		// dfy: 判断该 pod 内配置的资源信息，extender 插件是否关注，IsInterested 返回 true 表示关注
 		if !extender.IsInterested(pod) {
 			continue
 		}
+		// dfy: 若 extender 插件关注此资源，那么执行 extender 的 Filter 函数
 		feasibleList, failedMap, err := extender.Filter(pod, feasibleNodes)
 		if err != nil {
 			if extender.IsIgnorable() {
@@ -626,6 +629,7 @@ func (g *genericScheduler) prioritizeNodes(
 		combinedScores := make(map[string]int64, len(nodes))
 		// dfy: 计算各个 extender 对 node 的打分
 		for i := range g.extenders {
+			// dfy: 判断该 pod 内配置的资源信息，extender 插件是否关注，IsInterested 返回 true 表示关注
 			if !g.extenders[i].IsInterested(pod) {
 				continue
 			}
@@ -638,6 +642,7 @@ func (g *genericScheduler) prioritizeNodes(
 				}()
 				// dfy: 得到该 extender plugin 对 node 的打分
 				// dfy: extender 应该是个 http 服务, 发起请求，返回对应的打分
+				// dfy: 此部分调度 extender Plugin 的优选打分函数 Prioritize
 				prioritizedList, weight, err := g.extenders[extIndex].Prioritize(pod, nodes)
 				if err != nil {
 					// Prioritization errors from extender can be ignored, let k8s/other extenders determine the priorities
