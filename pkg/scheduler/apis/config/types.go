@@ -105,6 +105,7 @@ type KubeSchedulerConfiguration struct {
 
 	// Extenders are the list of scheduler extenders, each holding the values of how to communicate
 	// with the extender. These extenders are shared by all scheduler profiles.
+	// dfy: extender plugin 的一些配置信息，比如 关注哪些资源 ManagedResources
 	Extenders []Extender
 }
 

@@ -54,17 +54,21 @@ import (
 // Options has all the params needed to run a Scheduler
 type Options struct {
 	// The default values. These are overridden if ConfigFile is set or by values in InsecureServing.
+	// dfy: 从命令行读取参数，形成 KubeSchedulerConfiguration，若 ConfigFile 配置了，那么此处将被覆盖；也会被 InsecureServing 覆盖（Health、Metric）
 	ComponentConfig kubeschedulerconfig.KubeSchedulerConfiguration
 
-	SecureServing           *apiserveroptions.SecureServingOptionsWithLoopback
+	SecureServing *apiserveroptions.SecureServingOptionsWithLoopback
+	// dfy: 若配置了 o.CombinedInsecureServing ，将会覆盖 KubeSchedulerConfiguration 一些相关 Health 和 metric 配置信息
 	CombinedInsecureServing *CombinedInsecureServingOptions
 	Authentication          *apiserveroptions.DelegatingAuthenticationOptions
 	Authorization           *apiserveroptions.DelegatingAuthorizationOptions
 	Metrics                 *metrics.Options
 	Logs                    *logs.Options
-	Deprecated              *DeprecatedOptions
+	// dfy: 此处对应的数据结构，也包含 policy 文件的读取
+	Deprecated *DeprecatedOptions
 
 	// ConfigFile is the location of the scheduler server's configuration file.
+	// dfy: KubeSchedulerConfiguration 配置文件路径
 	ConfigFile string
 
 	// WriteConfigTo is the path where the default configuration will be written.
@@ -150,6 +154,7 @@ func newDefaultComponentConfig() (*kubeschedulerconfig.KubeSchedulerConfiguratio
 // Flags returns flags for a specific scheduler by section name
 func (o *Options) Flags() (nfs cliflag.NamedFlagSets) {
 	fs := nfs.FlagSet("misc")
+	// dfy: 此处是从读取 scheduler KubeSchedulerConfiguration 配置文件路径，存储到 o.ConfigFile
 	fs.StringVar(&o.ConfigFile, "config", o.ConfigFile, `The path to the configuration file. The following flags can overwrite fields in this file:
   --algorithm-provider
   --policy-config-file
@@ -162,6 +167,7 @@ func (o *Options) Flags() (nfs cliflag.NamedFlagSets) {
 	o.CombinedInsecureServing.AddFlags(nfs.FlagSet("insecure serving"))
 	o.Authentication.AddFlags(nfs.FlagSet("authentication"))
 	o.Authorization.AddFlags(nfs.FlagSet("authorization"))
+	// dfy： 此处是从命令行读取参数，然后拼接成 KubeSchedulerConfiguration，存储到 o.ComponentConfig，可以看出来 o.ComponentConfig 就是 KubeSchedulerConfiguration 类型
 	o.Deprecated.AddFlags(nfs.FlagSet("deprecated"), &o.ComponentConfig)
 
 	options.BindLeaderElectionFlags(&o.ComponentConfig.LeaderElection, nfs.FlagSet("leader election"))
@@ -173,16 +179,26 @@ func (o *Options) Flags() (nfs cliflag.NamedFlagSets) {
 }
 
 // ApplyTo applies the scheduler options to the given scheduler app configuration.
+// dfy: https://kubernetes.io/docs/reference/config-api/kube-scheduler-config.v1/
+// dfy: 加载 scheduler 的配置信息 KubeSchedulerConfiguration
+// dfy: o.ConfigFile 是 KubeSchedulerConfiguration  配置文件路径
+// dfy: o.ComponentConfig 是从 命令行读取的参数 形成的 KubeSchedulerConfiguration 配置
+// dfy: 此处可以看出，以 o.ConfigFile 配置文件中的信息为优先
 func (o *Options) ApplyTo(c *schedulerappconfig.Config) error {
+	// dfy: 若没有配置 ComponentConfig 就从 o.Deprecated.ApplyTo(&c.ComponentConfig) 加载 KubeSchedulerConfiguration
+	// dfy: 若有配置 ConfigFile 就从 loadConfigFromFile(o.ConfigFile) 加载 KubeSchedulerConfiguration
 	if len(o.ConfigFile) == 0 {
 		c.ComponentConfig = o.ComponentConfig
 
 		// apply deprecated flags if no config file is loaded (this is the old behaviour).
+		// dfy: 加载 scheduler 的 KubeSchedulerConfiguration 配置文件
 		o.Deprecated.ApplyTo(&c.ComponentConfig)
+		// dfy: 若配置了 o.CombinedInsecureServing ，将会覆盖 KubeSchedulerConfiguration 一些相关 Health 和 metric 配置信息
 		if err := o.CombinedInsecureServing.ApplyTo(c, &c.ComponentConfig); err != nil {
 			return err
 		}
 	} else {
+		// dfy: 加载 scheduler 的 KubeSchedulerConfiguration 配置文件
 		cfg, err := loadConfigFromFile(o.ConfigFile)
 		if err != nil {
 			return err
@@ -191,6 +207,7 @@ func (o *Options) ApplyTo(c *schedulerappconfig.Config) error {
 			return err
 		}
 
+		// dfy: 对于读取到的 KubeSchedulerConfiguration 配置信息进行处理
 		c.ComponentConfig = *cfg
 
 		// apply any deprecated Policy flags, if applicable
@@ -203,6 +220,7 @@ func (o *Options) ApplyTo(c *schedulerappconfig.Config) error {
 		}
 
 		// use the loaded config file only, with the exception of --address and --port.
+		// dfy: 若配置了 o.CombinedInsecureServing ，将会覆盖 KubeSchedulerConfiguration 一些相关 Health 和 metric 配置信息
 		if err := o.CombinedInsecureServing.ApplyToFromLoadedConfig(c, &c.ComponentConfig); err != nil {
 			return err
 		}
@@ -260,6 +278,7 @@ func (o *Options) Config() (*schedulerappconfig.Config, error) {
 	}
 
 	c := &schedulerappconfig.Config{}
+	// dfy: 加载 scheduler 的 KubeSchedulerConfiguration 配置文件
 	if err := o.ApplyTo(c); err != nil {
 		return nil, err
 	}

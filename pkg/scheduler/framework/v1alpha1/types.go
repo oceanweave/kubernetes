@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"errors"
 	"fmt"
+	"k8s.io/klog"
 	"sync"
 	"sync/atomic"
 	"time"

@@ -62,6 +62,8 @@ type Option func(runtime.Registry) error
 
 // NewSchedulerCommand creates a *cobra.Command object with default parameters and registryOptions
 func NewSchedulerCommand(registryOptions ...Option) *cobra.Command {
+	// dfy: opts 包含 KubeSchedulerConfiguration 文件配置信息
+	// dfy: opts 的读取和创建
 	opts, err := options.NewOptions()
 	if err != nil {
 		klog.Fatalf("unable to initialize command options: %v", err)
@@ -79,6 +81,7 @@ See [scheduling](https://kubernetes.io/docs/concepts/scheduling-eviction/)
 for more information about scheduling and the kube-scheduler component.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			// dfy: 基于给定的配置 创建 scheduler
+			// dfy: opts 包含 KubeSchedulerConfiguration 文件配置信息
 			if err := runCommand(cmd, opts, registryOptions...); err != nil {
 				fmt.Fprintf(os.Stderr, "%v\n", err)
 				os.Exit(1)
@@ -94,6 +97,8 @@ for more information about scheduling and the kube-scheduler component.`,
 		},
 	}
 	fs := cmd.Flags()
+	// dfy: 从命令行读取 scheduler 的配置信息
+	// dfy: 其中包含 KubeSchedulerConfiguration 配置文件路径，存储到 opt.ConfigFile
 	namedFlagSets := opts.Flags()
 	verflag.AddFlags(namedFlagSets.FlagSet("global"))
 	globalflag.AddGlobalFlags(namedFlagSets.FlagSet("global"), cmd.Name())
@@ -300,6 +305,7 @@ func Setup(ctx context.Context, opts *options.Options, outOfTreeRegistryOptions 
 		return nil, nil, utilerrors.NewAggregate(errs)
 	}
 
+	// dfy: scheduler 加载配置文件，其中包含 KubeSchedulerConfiguration 配置文件
 	c, err := opts.Config()
 	if err != nil {
 		return nil, nil, err
@@ -323,12 +329,15 @@ func Setup(ctx context.Context, opts *options.Options, outOfTreeRegistryOptions 
 		cc.InformerFactory,
 		recorderFactory,
 		ctx.Done(),
+		// dfy: 传入配置文件 cc.ComponentConfig.Profiles ， scheduler 可以从此处获得 extender
 		scheduler.WithProfiles(cc.ComponentConfig.Profiles...),
+		// dfy: 传入配置算法 cc.ComponentConfig.AlgorithmSource， scheduler 可从此处获得 extender
 		scheduler.WithAlgorithmSource(cc.ComponentConfig.AlgorithmSource),
 		scheduler.WithPercentageOfNodesToScore(cc.ComponentConfig.PercentageOfNodesToScore),
 		scheduler.WithFrameworkOutOfTreeRegistry(outOfTreeRegistry),
 		scheduler.WithPodMaxBackoffSeconds(cc.ComponentConfig.PodMaxBackoffSeconds),
 		scheduler.WithPodInitialBackoffSeconds(cc.ComponentConfig.PodInitialBackoffSeconds),
+		// dfy: 传入 extenders pulgin
 		scheduler.WithExtenders(cc.ComponentConfig.Extenders...),
 	)
 	if err != nil {

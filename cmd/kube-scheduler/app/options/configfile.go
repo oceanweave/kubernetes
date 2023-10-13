@@ -27,6 +27,7 @@ import (
 	kubeschedulerconfigv1beta1 "k8s.io/kubernetes/pkg/scheduler/apis/config/v1beta1"
 )
 
+// dfy: 加载 scheduler 的 KubeSchedulerConfiguration 配置文件
 func loadConfigFromFile(file string) (*kubeschedulerconfig.KubeSchedulerConfiguration, error) {
 	data, err := ioutil.ReadFile(file)
 	if err != nil {

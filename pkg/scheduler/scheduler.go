@@ -193,6 +193,7 @@ func New(client clientset.Interface,
 		stopEverything = wait.NeverStop
 	}
 
+	// dfy: 配置一些默认 options
 	options := defaultSchedulerOptions
 	for _, opt := range opts {
 		opt(&options)
