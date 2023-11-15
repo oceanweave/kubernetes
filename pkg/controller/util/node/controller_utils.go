@@ -68,6 +68,21 @@ func DeletePods(kubeClient clientset.Interface, pods []*v1.Pod, recorder record.
 				continue
 			}
 		}
+		// dfy:
+		//    若设置了 DeletionGracePeriodSeconds 此参数，会跳过此处删除，导致此 Pod 不会被删除
+		//    此参数用于优雅删除，配置多少秒后删除等
+		// 猜测：
+		// 1. 以往若配置此处，如 30s，猜测 kubelet 会监测，30s后清空该字段，为 nil，之后便可以顺利往下进行删除逻辑
+		// 参考 https://www.ziji.work/kubernetes/the-elegant-exit-mechanism-of-pod-in-kubernetes.html
+		// kubelet计算gracePeriod的过程如下
+		// 1 如果 podDeletionGracePeriodSeconds不是 nil，即被 ApiServer 删除，gracePeriod 直接取值。
+		// 2 如果 podSpec.TerminationGracePeriodSeconds不是 nil，则查看 pod 删除的原因是什么。
+		//    2.1 如果删除的原因是执行失败startupProbe，gracePeriod 取TerminationGracePeriodSecondsset in的值startupProbe。
+		//    2.2 如果删除的原因是执行失败livenessProbe，gracePeriod 取TerminationGracePeriodSecondsset in的值livenessProbe。
+		// 一旦获取到gracePeriod，kubelet 就会执行pod preStop，函数会executePreStopHook启动一个goroutine 并计算其执行时间。
+		// 从此时间中减去gracePeriod，以将最终超时传递给运行时以删除容器。超时时间传递给运行时。
+		// 所以，如果我们设置 pod preStop，我们需要同时考虑 preStop 的执行时间和容器退出的时间，
+		// 我们可以将 TerminationGracePeriodSeconds 设置为大于 preStop + 容器退出的时间。
 		// if the pod has already been marked for deletion, we still return true that there are remaining pods.
 		if pod.DeletionGracePeriodSeconds != nil {
 			remaining = true
