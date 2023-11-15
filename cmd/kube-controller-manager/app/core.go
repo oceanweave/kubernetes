@@ -17,7 +17,6 @@ limitations under the License.
 // Package app implements a server that runs a set of active
 // components.  This includes replication controllers, service endpoints and
 // nodes.
-//
 package app
 
 import (
@@ -191,8 +190,17 @@ func startNodeIpamController(ctx ControllerContext) (http.Handler, bool, error) 
 	return nil, true, nil
 }
 
+// dfy: 创建 NodeLifecycle Controller 并运行，负责监控 Node 的状态和 Pod 的驱逐
 func startNodeLifecycleController(ctx ControllerContext) (http.Handler, bool, error) {
 	lifecycleController, err := lifecyclecontroller.NewNodeLifecycleController(
+		// dfy: 创建 Informer 监控各种资源
+		// dfy: 注意此处虽然创建了各种 Informer，但并没有启动，同时在 Controller 里面也没有启动，是在该 Controller 的外层进行启动
+		//      Informer 的启动在该文件中 cmd/kube-controller-manager/app/controllermanager.go
+		// 链式调用，上一层创建的结构体，调用下一个函数，创建出另一个结构体，再继续调用，创建出另一个结构体
+		// 下层结构体的创建依赖上层结构体提供的一些参数
+		// Coordination() --> return &group{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
+		// V1() --> return &version{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
+		// Leases() --> return &leaseInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 		ctx.InformerFactory.Coordination().V1().Leases(),
 		ctx.InformerFactory.Core().V1().Pods(),
 		ctx.InformerFactory.Core().V1().Nodes(),

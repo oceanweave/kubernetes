@@ -140,9 +140,10 @@ const (
 // labelReconcileInfo lists Node labels to reconcile, and how to reconcile them.
 // primaryKey and secondaryKey are keys of labels to reconcile.
 //   - If both keys exist, but their values don't match. Use the value from the
-//   primaryKey as the source of truth to reconcile.
+//     primaryKey as the source of truth to reconcile.
 //   - If ensureSecondaryExists is true, and the secondaryKey does not
-//   exist, secondaryKey will be added with the value of the primaryKey.
+//     exist, secondaryKey will be added with the value of the primaryKey.
+//
 // dfy: 同步 node label 但不太清楚什么作用
 // - 若 primaryKey 和 secondaryKey 都存在，但值不匹配，用 primaryKey 的值去同步调谐
 // - 若 ensureSecondaryExists 为 true 且 secondaryKey 不存在，secondaryKey 将会被添加和 primaryKey 相同的值
@@ -381,12 +382,12 @@ type Controller struct {
 // NewNodeLifecycleController returns a new taint controller.
 // dfy:
 // 核心逻辑如下：
-//（1）根据参数初始化Controller
-//（2）定义了pod的监听处理逻辑。都是先nc.podUpdated，如果enable-taint-manager=true,还会经过nc.taintManager.PodUpdated函数处理
-//（3）实现找出所有node上pod的函数
-//（4）如果enable-taint-manager=true，node有变化都需要经过 nc.taintManager.NodeUpdated函数
-//（5）实现node的监听处理，这里不管开没开taint-manager，都是要监听
-//（6）实现node, ds, lease的list，用于获取对象
+// （1）根据参数初始化Controller
+// （2）定义了pod的监听处理逻辑。都是先nc.podUpdated，如果enable-taint-manager=true,还会经过nc.taintManager.PodUpdated函数处理
+// （3）实现找出所有node上pod的函数
+// （4）如果enable-taint-manager=true，node有变化都需要经过 nc.taintManager.NodeUpdated函数
+// （5）实现node的监听处理，这里不管开没开taint-manager，都是要监听
+// （6）实现node, ds, lease的list，用于获取对象
 func NewNodeLifecycleController(
 	leaseInformer coordinformers.LeaseInformer,
 	podInformer coreinformers.PodInformer,
@@ -575,6 +576,7 @@ func NewNodeLifecycleController(
 
 	// dfy: --feature-gates=NodeLease=xxx：默认值true，使用lease对象上报node心跳信息，替换老的更新node的status的方式，能大大减轻apiserver的负担；
 	// 以前通过门控开关 NodeLease 来判别是否使用 leaseInformer，现在直接使用。 可以参考 1.16版本
+	// dfy: 此处都调用了 Informer 方法，创建了 lease Informer 实例，并记录到 InformerFactory 的 informers 的 map 结构中
 	nc.leaseLister = leaseInformer.Lister()
 	nc.leaseInformerSynced = leaseInformer.Informer().HasSynced
 
@@ -590,14 +592,14 @@ func NewNodeLifecycleController(
 // Run starts an asynchronous loop that monitors the status of cluster nodes.
 // dfy:
 // 逻辑如下：
-//（1）等待leaseInformer、nodeInformer、podInformerSynced、daemonSetInformerSynced同步完成。
-//（2）如果enable-taint-manager=true,开启nc.taintManager.Run
-//（3）执行doNodeProcessingPassWorker，这个是处理nodeUpdateQueue队列的node
-//（4）doPodProcessingWorker，这个是处理podUpdateQueue队列的pod
-//（5）如果开启了feature-gates=TaintBasedEvictions=true，执行doNoExecuteTaintingPass函数。否则执行doEvictionPass函数
-//（6）一直监听node状态是否健康
+// （1）等待leaseInformer、nodeInformer、podInformerSynced、daemonSetInformerSynced同步完成。
+// （2）如果enable-taint-manager=true,开启nc.taintManager.Run
+// （3）执行doNodeProcessingPassWorker，这个是处理nodeUpdateQueue队列的node
+// （4）doPodProcessingWorker，这个是处理podUpdateQueue队列的pod
+// （5）如果开启了feature-gates=TaintBasedEvictions=true，执行doNoExecuteTaintingPass函数。否则执行doEvictionPass函数
+// （6）一直监听node状态是否健康
 //
-//链接：https://juejin.cn/post/7130531136878411789
+// 链接：https://juejin.cn/post/7130531136878411789
 func (nc *Controller) Run(stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 
@@ -670,8 +672,8 @@ func (nc *Controller) Run(stopCh <-chan struct{}) {
 
 // dfy: 处理 nodeUpdateQueue 中的 node，为其添加合适的 NoSchedule taint 以及 label
 // 可以看出来doNodeProcessingPassWorker核心就是2件事：
-//（1）给node添加NoScheduleTaint
-//（2）给node添加lables
+// （1）给node添加NoScheduleTaint
+// （2）给node添加lables
 func (nc *Controller) doNodeProcessingPassWorker() {
 	for {
 		obj, shutdown := nc.nodeUpdateQueue.Get()
@@ -773,14 +775,14 @@ func (nc *Controller) doNoScheduleTaintingPass(nodeName string) error {
 // 启用taint manager 执行doNoExecuteTaintingPass–添加NoExecute的taint。这里不执行驱逐，驱逐单独在taint manager里处理。
 // doNoExecuteTaintingPass是一个令牌桶限速队列（也是受受参数evictionLimiterQPS影响，默认0.1也就是10s驱逐一个node）
 //
-// - 遍历zoneNoExecuteTainter，获得一个zone的node队列，从队列中获取一个node，执行下面步骤
-// - 从缓存中获取node
-// - 如果node ready condition为false，移除“node.kubernetes.io/unreachable”的taint，
-//   添加“node.kubernetes.io/not-ready” 的taint，Effect为NoExecute。
-// - 如果node ready condition为unknown，移除“node.kubernetes.io/not-ready” 的taint，
-//   添加“node.kubernetes.io/unreachable” 的taint，Effect为NoExecute。
+//   - 遍历zoneNoExecuteTainter，获得一个zone的node队列，从队列中获取一个node，执行下面步骤
+//   - 从缓存中获取node
+//   - 如果node ready condition为false，移除“node.kubernetes.io/unreachable”的taint，
+//     添加“node.kubernetes.io/not-ready” 的taint，Effect为NoExecute。
+//   - 如果node ready condition为unknown，移除“node.kubernetes.io/not-ready” 的taint，
+//     添加“node.kubernetes.io/unreachable” 的taint，Effect为NoExecute。
 //
-//链接：https://juejin.cn/post/7130531136878411789
+// 链接：https://juejin.cn/post/7130531136878411789
 // doNoExecuteTaintingPass just add NoExecute Taints to the Node.
 // The eviction is not executed here, and the eviction is handled separately in the TaintManager Run function.
 func (nc *Controller) doNoExecuteTaintingPass() {
@@ -845,7 +847,7 @@ func (nc *Controller) doNoExecuteTaintingPass() {
 // 5)删除这个pod
 // - 在nodeEvictionMap设置node的状态为evicted
 //
-//链接：https://juejin.cn/post/7130531136878411789
+// 链接：https://juejin.cn/post/7130531136878411789
 func (nc *Controller) doEvictionPass() {
 	nc.evictorLock.Lock()
 	defer nc.evictorLock.Unlock()
@@ -901,7 +903,7 @@ func (nc *Controller) doEvictionPass() {
 // - 每隔nodeMonitorPeriod周期，执行一次monitorNodeHealth，维护node状态和zone的状态，更新未响应的node
 // – 设置node status为unknown和根据集群不同状态设置zone的速率。
 //
-//链接：https://juejin.cn/post/7130531136878411789
+// 链接：https://juejin.cn/post/7130531136878411789
 // monitorNodeHealth verifies node health are constantly updated by kubelet, and
 // if not, post "NodeReady==ConditionUnknown".
 // This function will taint nodes who are not ready or not reachable for a long period of time.
@@ -1083,17 +1085,22 @@ func (nc *Controller) processTaintBaseEviction(node *v1.Node, observedReadyCondi
 
 // dfy: 在 podEvictionTimeout 时间后，驱逐该 node 上的 pod ；不看 Taint 只看是否到时间该驱逐了
 // 核心逻辑如下：
-//（1）node最后发现ReadyCondition为false，如果nodeHealthMap里的readyTransitionTimestamp加上podEvictionTimeout的时间是过去的时间
-//  –ReadyCondition为false状态已经持续了至少podEvictionTimeout，执行evictPods。
-//（2）node最后发现ReadyCondition为unknown，如果nodeHealthMap里的probeTimestamp加上podEvictionTimeout的时间是过去的时间
-//  –ReadyCondition为false状态已经持续了至少podEvictionTimeout，执行evictPods。
-//（3）node最后发现ReadyCondition为true，则执行cancelPodEviction
-//  –在nodeEvictionMap设置status为unmarked，然后node从zonePodEvictor队列中移除。
+// （1）node最后发现ReadyCondition为false，如果nodeHealthMap里的readyTransitionTimestamp加上podEvictionTimeout的时间是过去的时间
+//
+//	–ReadyCondition为false状态已经持续了至少podEvictionTimeout，执行evictPods。
+//
+// （2）node最后发现ReadyCondition为unknown，如果nodeHealthMap里的probeTimestamp加上podEvictionTimeout的时间是过去的时间
+//
+//	–ReadyCondition为false状态已经持续了至少podEvictionTimeout，执行evictPods。
+//
+// （3）node最后发现ReadyCondition为true，则执行cancelPodEviction
+//
+//	–在nodeEvictionMap设置status为unmarked，然后node从zonePodEvictor队列中移除。
 //
 // evictPods并不会马上驱逐pod，他还是看node是否已经是驱逐状态。
 // evictPods先从nodeEvictionMap获取node驱逐的状态，如果是evicted说明node已经发生驱逐，则把node上的这个pod删除。
 // 否则设置状态为toBeEvicted，然后node加入zonePodEvictor队列等待执行驱逐pod
-//链接：https://juejin.cn/post/7130531136878411789
+// 链接：https://juejin.cn/post/7130531136878411789
 func (nc *Controller) processNoTaintBaseEviction(node *v1.Node, observedReadyCondition *v1.NodeCondition, gracePeriod time.Duration, pods []*v1.Pod) error {
 	decisionTimestamp := nc.now()
 	nodeHealthData := nc.nodeHealthMap.getDeepCopy(node.Name)
@@ -1489,12 +1496,14 @@ func (nc *Controller) podUpdated(oldPod, newPod *v1.Pod) {
 
 // dfy:
 // doPodProcessingWorker从podUpdateQueue读取一个pod，执行processPod。（注意这里的podUpdateQueue和tainManger的podUpdateQueue不是一个队列，是同名而已）
-//processPod和新逻辑如下：
-//（1） 判断NodeCondition是否notReady
-//（2）如果feature-gates=TaintBasedEvictions=false，则执行processNoTaintBaseEviction
-//（3）最终都会判断node ReadyCondition是否不为true，如果不为true, 执行MarkPodsNotReady
+// processPod和新逻辑如下：
+// （1） 判断NodeCondition是否notReady
+// （2）如果feature-gates=TaintBasedEvictions=false，则执行processNoTaintBaseEviction
+// （3）最终都会判断node ReadyCondition是否不为true，如果不为true, 执行MarkPodsNotReady
+//
 //	–如果pod的ready condition不为false， 将pod的ready condition设置为false，并更新LastTransitionTimestamp；否则不更新pod
-//链接：https://juejin.cn/post/7130531136878411789
+//
+// 链接：https://juejin.cn/post/7130531136878411789
 func (nc *Controller) doPodProcessingWorker() {
 	for {
 		obj, shutdown := nc.podUpdateQueue.Get()
@@ -1601,9 +1610,9 @@ func (nc *Controller) setLimiterInZone(zone string, zoneSize int, state ZoneStat
 }
 
 // classifyNodes classifies the allNodes to three categories:
-//   1. added: the nodes that in 'allNodes', but not in 'knownNodeSet'
-//   2. deleted: the nodes that in 'knownNodeSet', but not in 'allNodes'
-//   3. newZoneRepresentatives: the nodes that in both 'knownNodeSet' and 'allNodes', but no zone states
+//  1. added: the nodes that in 'allNodes', but not in 'knownNodeSet'
+//  2. deleted: the nodes that in 'knownNodeSet', but not in 'allNodes'
+//  3. newZoneRepresentatives: the nodes that in both 'knownNodeSet' and 'allNodes', but no zone states
 func (nc *Controller) classifyNodes(allNodes []*v1.Node) (added, deleted, newZoneRepresentatives []*v1.Node) {
 	for i := range allNodes {
 		if _, has := nc.knownNodeSet[allNodes[i].Name]; !has {
@@ -1697,12 +1706,12 @@ func (nc *Controller) cancelPodEviction(node *v1.Node) bool {
 }
 
 // evictPods:
-// - adds node to evictor queue if the node is not marked as evicted.
-//   Returns false if the node name was already enqueued.
-// - deletes pods immediately if node is already marked as evicted.
-//   Returns false, because the node wasn't added to the queue.
-// - 若 node 没有被标记为 evicted，就将node放入到 evictor 队列；若已在队列，返回 false
-// - 若 node 已被标记 evicted，就立刻删除 pods；若node 没有被添加到队列，返回 false
+//   - adds node to evictor queue if the node is not marked as evicted.
+//     Returns false if the node name was already enqueued.
+//   - deletes pods immediately if node is already marked as evicted.
+//     Returns false, because the node wasn't added to the queue.
+//   - 若 node 没有被标记为 evicted，就将node放入到 evictor 队列；若已在队列，返回 false
+//   - 若 node 已被标记 evicted，就立刻删除 pods；若node 没有被添加到队列，返回 false
 func (nc *Controller) evictPods(node *v1.Node, pods []*v1.Pod) (bool, error) {
 	nc.evictorLock.Lock()
 	defer nc.evictorLock.Unlock()

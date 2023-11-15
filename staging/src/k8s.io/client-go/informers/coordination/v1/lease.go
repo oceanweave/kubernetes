@@ -35,7 +35,9 @@ import (
 // LeaseInformer provides access to a shared informer and lister for
 // Leases.
 type LeaseInformer interface {
+	// dfy: 以此举例，调用 Informer 方法时，会创建 Informer
 	Informer() cache.SharedIndexInformer
+	// dfy: Lister 方法时活的 Informer 的 indexer 封装起来
 	Lister() v1.LeaseLister
 }
 
@@ -77,11 +79,20 @@ func NewFilteredLeaseInformer(client kubernetes.Interface, namespace string, res
 	)
 }
 
+// dfy: 此处真正创建 lease Informer
 func (f *leaseInformer) defaultInformer(client kubernetes.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
 	return NewFilteredLeaseInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
 }
 
 func (f *leaseInformer) Informer() cache.SharedIndexInformer {
+	// dfy:
+	// - 创建 Informer
+	// - f.defaultInformer 对应真正创建 lease Informer 的函数，也就是上方的函数
+	// 那为什么不直接调用函数呢？
+	// - 因为要做一些中间操作，装饰器模式
+	// - 这里做的就是，记录该 Informer 类型和实例，然后存到 InformerFactory 实例的 informers map 中，用于后续 Start 启动
+	// - &coordinationv1.Lease{} 表示类型，记为 informers map 中的 key
+	// - f.defaultInformer 创建 lease Informer，记为 上面key 对应的 value，记录到 informers map 中
 	return f.factory.InformerFor(&coordinationv1.Lease{}, f.defaultInformer)
 }
 

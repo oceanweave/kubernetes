@@ -109,8 +109,11 @@ func NewFilteredSharedInformerFactory(client kubernetes.Interface, defaultResync
 func NewSharedInformerFactoryWithOptions(client kubernetes.Interface, defaultResync time.Duration, options ...SharedInformerOption) SharedInformerFactory {
 	factory := &sharedInformerFactory{
 		client:           client,
+		// dfy: 此处的 namespace 是作用范围是所有 namespace
 		namespace:        v1.NamespaceAll,
 		defaultResync:    defaultResync,
+		// dfy: 此处用于记录所有创建的 Informer，之后 Informer 调用 Start 函数也会依赖此结构
+		// dfy: InformerFactroy 调用 Start 函数时，会遍历该结构，将所有注册的 Informer 启动
 		informers:        make(map[reflect.Type]cache.SharedIndexInformer),
 		startedInformers: make(map[reflect.Type]bool),
 		customResync:     make(map[reflect.Type]time.Duration),
@@ -161,10 +164,12 @@ func (f *sharedInformerFactory) WaitForCacheSync(stopCh <-chan struct{}) map[ref
 
 // InternalInformerFor returns the SharedIndexInformer for obj using an internal
 // client.
+// dfy: 创建 Informer 并记录到 sharedInformerFactory 的 informers map 结构中
 func (f *sharedInformerFactory) InformerFor(obj runtime.Object, newFunc internalinterfaces.NewInformerFunc) cache.SharedIndexInformer {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 
+	// dfy: 记录该 Informer 是哪种类型，就是关注哪种资源
 	informerType := reflect.TypeOf(obj)
 	informer, exists := f.informers[informerType]
 	if exists {
@@ -176,7 +181,9 @@ func (f *sharedInformerFactory) InformerFor(obj runtime.Object, newFunc internal
 		resyncPeriod = f.defaultResync
 	}
 
+	// dfy: newFunc 创建 Informer 实例（就是 Informer 结构体）
 	informer = newFunc(f.client, resyncPeriod)
+	// dfy: 记录到 sharedInformerFactory 的 informers map 结构中
 	f.informers[informerType] = informer
 
 	return informer
