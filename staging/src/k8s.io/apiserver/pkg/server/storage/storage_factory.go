@@ -67,6 +67,7 @@ type DefaultStorageFactory struct {
 	// Its authentication information will be used for every storage.Interface returned.
 	StorageConfig storagebackend.Config
 
+	// dfy: 加解密的 transformer
 	Overrides map[schema.GroupResource]groupResourceOverrides
 
 	DefaultResourcePrefixes map[schema.GroupResource]string
@@ -113,6 +114,7 @@ type groupResourceOverrides struct {
 	// returned decoders will be priority for attempt to decode.
 	decoderDecoratorFn func([]runtime.Decoder) []runtime.Decoder
 	// transformer is optional and shall encrypt that resource at rest.
+	// dfy: 用于加密
 	transformer value.Transformer
 	// disablePaging will prevent paging on the provided resource.
 	disablePaging bool
@@ -139,6 +141,7 @@ func (o groupResourceOverrides) Apply(config *storagebackend.Config, options *St
 	if o.decoderDecoratorFn != nil {
 		options.DecoderDecoratorFn = o.decoderDecoratorFn
 	}
+	// dfy: 此处配置 加密相关的
 	if o.transformer != nil {
 		config.Transformer = o.transformer
 	}
@@ -210,6 +213,7 @@ func (s *DefaultStorageFactory) SetSerializer(groupResource schema.GroupResource
 	s.Overrides[groupResource] = overrides
 }
 
+// dfy: 设置加密转换器
 func (s *DefaultStorageFactory) SetTransformer(groupResource schema.GroupResource, transformer value.Transformer) {
 	overrides := s.Overrides[groupResource]
 	overrides.transformer = transformer
@@ -261,6 +265,7 @@ func (s *DefaultStorageFactory) NewConfig(groupResource schema.GroupResource) (*
 		StorageSerializer: s.DefaultSerializer,
 	}
 
+	// dfy: Overrides 记录加密相关配置，在此处进行了应用
 	if override, ok := s.Overrides[getAllResourcesAlias(chosenStorageResource)]; ok {
 		override.Apply(&storageConfig, &codecConfig)
 	}

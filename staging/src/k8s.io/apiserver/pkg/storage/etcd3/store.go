@@ -94,15 +94,17 @@ type objState struct {
 
 // New returns an etcd3 implementation of storage.Interface.
 func New(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Object, prefix string, groupResource schema.GroupResource, transformer value.Transformer, pagingEnabled bool, leaseManagerConfig LeaseManagerConfig) storage.Interface {
+	// dfy: 创建存储实例，step6
 	return newStore(c, codec, newFunc, prefix, groupResource, transformer, pagingEnabled, leaseManagerConfig)
 }
 
 func newStore(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Object, prefix string, groupResource schema.GroupResource, transformer value.Transformer, pagingEnabled bool, leaseManagerConfig LeaseManagerConfig) *store {
 	versioner := APIObjectVersioner{}
 	result := &store{
-		client:        c,
-		codec:         codec,
-		versioner:     versioner,
+		client:    c,
+		codec:     codec,
+		versioner: versioner,
+		// dfy: 配置加解密 transformer
 		transformer:   transformer,
 		pagingEnabled: pagingEnabled,
 		// for compatibility with etcd2 impl.
@@ -143,6 +145,7 @@ func (s *store) Get(ctx context.Context, key string, opts storage.GetOptions, ou
 	}
 	kv := getResp.Kvs[0]
 
+	// dfy: 解密，进行读取
 	data, _, err := s.transformer.TransformFromStorage(ctx, kv.Value, authenticatedDataString(key))
 	if err != nil {
 		return storage.NewInternalError(err.Error())
@@ -170,6 +173,7 @@ func (s *store) Create(ctx context.Context, key string, obj, out runtime.Object,
 		return err
 	}
 
+	// dfy: 加密，存储到 etcd 中
 	newData, err := s.transformer.TransformToStorage(ctx, data, authenticatedDataString(key))
 	if err != nil {
 		return storage.NewInternalError(err.Error())

@@ -130,7 +130,21 @@ func (cfg *Config) Complete() CompletedConfig {
 }
 
 // New returns a new instance of CustomResourceDefinitions from the given config.
+/*
+- 首先调用c.GenericConfig.New根据go-restful模式初始化Container，在c.GenericConfig.New调用NewAPIServerHandler中初始化handler，
+  APIServerHandler是APIServer使用的Handler类型，包括go-restfuland non-go-restful，和一个你在两者之间选择的Director对象，
+  go-restful用来处理注册的handler和non-go restful是用于处理不存在的处理程序，
+  API URI 处理的选择过程是：FullHandlerChain-> Director -> {GoRestfulContainer, NonGoRestfulMux}.
+  在c.GenericConfig.New,installAPI中也调用添加路由信息包括/, /debug/*, /metrics,/version等。
+  这三种服务器都是通过调用c.GenericConfig.New初始化genericServer然后注册API来初始化的。
+- 调用s.GenericAPIServer.InstallAPIGroup注册路由中的API资源，这个方法的调用链很深，主要是注册要暴露给服务端的API资源，
+  从而可以通过http接口对资源进行REST操作。其他几个服务器也在InstallAPI初始化期间执行相应的操作。
+- 初始化服务器中需要用到的控制器，主要是openapiController, crdController, namingController, establishingController,
+  nonStructuralSchemaController, apiApprovalController, finalizingController。
+- 将需要启动的控制器和通知器添加到 PostStartHook
+ */
 func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget) (*CustomResourceDefinitions, error) {
+	// 1. 初始化 genericServer
 	genericServer, err := c.GenericConfig.New("apiextensions-apiserver", delegationTarget)
 	if err != nil {
 		return nil, err
@@ -147,6 +161,7 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 		GenericAPIServer: genericServer,
 	}
 
+	// 2. 初始化 APIGroup Info，APIGroup 指该 Server 需要暴露的 API
 	apiResourceConfig := c.GenericConfig.MergedResourceConfig
 	apiGroupInfo := genericapiserver.NewDefaultAPIGroupInfo(apiextensions.GroupName, Scheme, metav1.ParameterCodec, Codecs)
 	storage := map[string]rest.Storage{}
@@ -163,10 +178,12 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 		apiGroupInfo.VersionedResourcesStorageMap[v1.SchemeGroupVersion.Version] = storage
 	}
 
+	// 3. 注册 APIGroup
 	if err := s.GenericAPIServer.InstallAPIGroup(&apiGroupInfo); err != nil {
 		return nil, err
 	}
 
+	// 4. 初始化需要使用的 Controller
 	crdClient, err := clientset.NewForConfig(s.GenericAPIServer.LoopbackClientConfig)
 	if err != nil {
 		// it's really bad that this is leaking here, but until we can fix the test (which I'm pretty sure isn't even testing what it wants to test),
@@ -264,6 +281,7 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 	// we don't want to report healthy until we can handle all CRDs that have already been registered.  Waiting for the informer
 	// to sync makes sure that the lister will be valid before we begin.  There may still be races for CRDs added after startup,
 	// but we won't go healthy until we can handle the ones already present.
+	// 5. 将 Informer 以及 Controller 添加到 PostStartHook 中
 	s.GenericAPIServer.AddPostStartHookOrDie("crd-informer-synced", func(context genericapiserver.PostStartHookContext) error {
 		return wait.PollImmediateUntil(100*time.Millisecond, func() (bool, error) {
 			if s.Informers.Apiextensions().V1().CustomResourceDefinitions().Informer().HasSynced() {

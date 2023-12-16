@@ -141,9 +141,11 @@ func NewServerRunOptions() *ServerRunOptions {
 }
 
 // Flags returns flags for a specific APIServer by section name
+// dfy: 加密配置参数的读取  设置 kube-apiserver 的 --encryption-provider-config 参数
 func (s *ServerRunOptions) Flags() (fss cliflag.NamedFlagSets) {
 	// Add the generic flags.
 	s.GenericServerRunOptions.AddUniversalFlags(fss.FlagSet("generic"))
+	// dfy: 加密参数的读取落在了 etcd 这，--encryption-provider-config 参数
 	s.Etcd.AddFlags(fss.FlagSet("etcd"))
 	s.SecureServing.AddFlags(fss.FlagSet("secure serving"))
 	s.Audit.AddFlags(fss.FlagSet("auditing"))

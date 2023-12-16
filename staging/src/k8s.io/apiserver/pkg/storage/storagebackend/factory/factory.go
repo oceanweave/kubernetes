@@ -33,6 +33,8 @@ func Create(c storagebackend.ConfigForResource, newFunc func() runtime.Object) (
 	case storagebackend.StorageTypeETCD2:
 		return nil, nil, fmt.Errorf("%s is no longer a supported storage backend", c.Type)
 	case storagebackend.StorageTypeUnset, storagebackend.StorageTypeETCD3:
+		// dfy: 创建存储实例，step4
+		// etcd3 存储
 		return newETCD3Storage(c, newFunc)
 	default:
 		return nil, nil, fmt.Errorf("unknown storage type: %s", c.Type)

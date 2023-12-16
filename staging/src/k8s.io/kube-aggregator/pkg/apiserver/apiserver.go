@@ -175,7 +175,15 @@ func (cfg *Config) Complete() CompletedConfig {
 }
 
 // NewWithDelegate returns a new instance of APIAggregator from the given config.
+/*
+NewWithDelegate`是初始化aggregatorServer的方法，主要逻辑如下。
+
+- 调用c.GenericConfig.New初始化GenericAPIServer，上面已经分析了其内部主要功能。
+- 调用apiservicerest.NewRESTStorage为APIServices资源创建RESTStorage，RESTStorage的目的是对应每个资源的访问路径及其后端存储操作。
+- 调用s.GenericAPIServer.InstallAPIGroup为 APIGroup 注册路由信息。
+ */
 func (c completedConfig) NewWithDelegate(delegationTarget genericapiserver.DelegationTarget) (*APIAggregator, error) {
+	// 1. 初始化 genericServer
 	genericServer, err := c.GenericConfig.New("kube-aggregator", delegationTarget)
 	if err != nil {
 		return nil, err
@@ -221,6 +229,7 @@ func (c completedConfig) NewWithDelegate(delegationTarget genericapiserver.Deleg
 		return nil, err
 	}
 
+	// 2. 为 API 注册路由
 	apiGroupInfo := apiservicerest.NewRESTStorage(c.GenericConfig.MergedResourceConfig, c.GenericConfig.RESTOptionsGetter, resourceExpirationEvaluator.ShouldServeForVersion(1, 22))
 	if err := s.GenericAPIServer.InstallAPIGroup(&apiGroupInfo); err != nil {
 		return nil, err
@@ -234,6 +243,7 @@ func (c completedConfig) NewWithDelegate(delegationTarget genericapiserver.Deleg
 		return nil, fmt.Errorf("API group/version %s must be enabled", v1.SchemeGroupVersion.String())
 	}
 
+	// 3. 初始化 apiserviceRegistrationController、availableController
 	apisHandler := &apisHandler{
 		codecs:         aggregatorscheme.Codecs,
 		lister:         s.lister,
@@ -287,6 +297,7 @@ func (c completedConfig) NewWithDelegate(delegationTarget genericapiserver.Deleg
 		return nil, err
 	}
 
+	// 4. 添加 PostStartHook
 	s.GenericAPIServer.AddPostStartHookOrDie("start-kube-aggregator-informers", func(context genericapiserver.PostStartHookContext) error {
 		informerFactory.Start(context.StopCh)
 		c.GenericConfig.SharedInformerFactory.Start(context.StopCh)
@@ -411,6 +422,7 @@ func (s *APIAggregator) PrepareRun() (preparedAPIAggregator, error) {
 }
 
 func (s preparedAPIAggregator) Run(stopCh <-chan struct{}) error {
+	// 跳到 preparedGenericAPIServer
 	return s.runnable.Run(stopCh)
 }
 

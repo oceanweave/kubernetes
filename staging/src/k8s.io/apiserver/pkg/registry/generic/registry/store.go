@@ -408,6 +408,7 @@ func (e *Store) Create(ctx context.Context, obj runtime.Object, createValidation
 		return nil, err
 	}
 	out := e.NewFunc()
+	// 存储到 etcd 中
 	if err := e.Storage.Create(ctx, key, obj, out, ttl, dryrun.IsDryRun(options.DryRun)); err != nil {
 		err = storeerr.InterpretCreateError(err, qualifiedResource, name)
 		err = rest.CheckGeneratedNameError(ctx, e.CreateStrategy, err, obj)
@@ -1289,6 +1290,11 @@ func (e *Store) calculateTTL(obj runtime.Object, defaultTTL int64, update bool) 
 
 // CompleteWithOptions updates the store with the provided options and
 // defaults common fields.
+/*
+CompleteWithOptions 主要用于设置 store 中配置的一些默认值，并根据提供的选项更新 store，主要是初始化 store 的后端存储实例。
+
+- 在CompleteWithOptions方法内部，options.RESTOptions.GetRESTOptions方法被调用，最终返回generic.RESTOptions对象，该对象包含了etcd的一些配置，该generic.RESTOptions对象包含了etcd初始化的一些配置，数据序列化方法，以及一个存储。该StorageWithCacher-->NewRawStorage-->Create方法被顺序调用以创建最终的依赖后端存储。
+ */
 func (e *Store) CompleteWithOptions(options *generic.StoreOptions) error {
 	if e.DefaultQualifiedResource.Empty() {
 		return fmt.Errorf("store %#v must have a non-empty qualified resource", e)
@@ -1348,12 +1354,15 @@ func (e *Store) CompleteWithOptions(options *generic.StoreOptions) error {
 		return err
 	}
 
+	// 1. 调用 options.RESTOptions.GetRESTOptions
+	// dfy：此处会调用 StorageFactoryRestOptionsFactory 的方法，进行相应的 加密 配置
 	opts, err := options.RESTOptions.GetRESTOptions(e.DefaultQualifiedResource)
 	if err != nil {
 		return err
 	}
 
 	// ResourcePrefix must come from the underlying factory
+	// 2. 设置 ResourcePrefix
 	prefix := opts.ResourcePrefix
 	if !strings.HasPrefix(prefix, "/") {
 		prefix = "/" + prefix
@@ -1396,6 +1405,7 @@ func (e *Store) CompleteWithOptions(options *generic.StoreOptions) error {
 		return e.KeyFunc(genericapirequest.NewContext(), accessor.GetName())
 	}
 
+	// 3. 以下操作主要是将 opts 对象中的值赋值到 store 对象中
 	if e.DeleteCollectionWorkers == 0 {
 		e.DeleteCollectionWorkers = opts.DeleteCollectionWorkers
 	}

@@ -163,6 +163,28 @@ func GetTransformerOverrides(filepath string) (map[schema.GroupResource]value.Tr
 	}
 	defer f.Close()
 
+	// dfy: 解析--encryption-provider-config指定的文件
+	/*
+	apiVersion: apiserver.config.k8s.io/v1
+	kind: EncryptionConfiguration
+	resources:
+	  - resources:
+	      - secrets
+	    providers:
+	      - identity: {}
+	      - aesgcm:
+	          keys:
+	            - name: key1
+	              secret: c2VjcmV0IGlzIHNlY3VyZQ==
+	            - name: key2
+	              secret: dGhpcyBpcyBwYXNzd29yZA==
+	      - aescbc:
+	          keys:
+	            - name: key1
+	              secret: c2VjcmV0IGlzIHNlY3VyZQ==
+	            - name: key2
+	              secret: dGhpcyBpcyBwYXNzd29yZA==
+	 */
 	result, err := parseEncryptionConfiguration(f)
 	if err != nil {
 		return nil, fmt.Errorf("error while parsing encryption provider configuration file %q: %v", filepath, err)
@@ -176,6 +198,7 @@ func parseEncryptionConfiguration(f io.Reader) (map[schema.GroupResource]value.T
 		return nil, fmt.Errorf("could not read contents: %v", err)
 	}
 
+	// dfy: 反序列化 EncryptionConfiguration 信息
 	config, err := loadConfig(configFileContents)
 	if err != nil {
 		return nil, fmt.Errorf("error while parsing file: %v", err)
@@ -184,6 +207,7 @@ func parseEncryptionConfiguration(f io.Reader) (map[schema.GroupResource]value.T
 	resourceToPrefixTransformer := map[schema.GroupResource][]value.PrefixTransformer{}
 
 	// For each entry in the configuration
+	// dfy: 根据各种算法，创建对应的转换器 transformer 进行后续的加解密
 	for _, resourceConfig := range config.Resources {
 		transformers, err := prefixTransformers(&resourceConfig)
 		if err != nil {
@@ -198,6 +222,7 @@ func parseEncryptionConfiguration(f io.Reader) (map[schema.GroupResource]value.T
 		}
 	}
 
+	// dfy: 记录加密文件配置的 资源与加密算法 transformer 的映射关系
 	result := map[schema.GroupResource]value.Transformer{}
 	for gr, transList := range resourceToPrefixTransformer {
 		result[gr] = value.NewMutableTransformer(value.NewPrefixTransformers(fmt.Errorf("no matching prefix found"), transList...))
@@ -209,9 +234,11 @@ func parseEncryptionConfiguration(f io.Reader) (map[schema.GroupResource]value.T
 func loadConfig(data []byte) (*apiserverconfig.EncryptionConfiguration, error) {
 	scheme := runtime.NewScheme()
 	codecs := serializer.NewCodecFactory(scheme)
+	// dfy: 引入 EncryptionConfiguration 结构相关信息
 	apiserverconfig.AddToScheme(scheme)
 	apiserverconfigv1.AddToScheme(scheme)
 
+	// dfy: 反序列化
 	configObj, gvk, err := codecs.UniversalDecoder().Decode(data, nil, nil)
 	if err != nil {
 		return nil, err
@@ -242,8 +269,10 @@ func prefixTransformers(config *apiserverconfig.ResourceConfiguration) ([]value.
 			transformer, err = aesPrefixTransformer(provider.AESCBC, aestransformer.NewCBCTransformer, aesCBCTransformerPrefixV1)
 		case provider.Secretbox != nil:
 			transformer, err = secretboxPrefixTransformer(provider.Secretbox)
+			// 此处是读取 KMS 配置
 		case provider.KMS != nil:
 			var envelopeService envelope.Service
+			// dfy: 创建 gprc Service，用于连接远程 kms 加解密服务
 			envelopeService, err = envelopeServiceFactory(provider.KMS.Endpoint, provider.KMS.Timeout.Duration)
 			if err != nil {
 				return nil, fmt.Errorf("could not configure KMS plugin %q, error: %v", provider.KMS.Name, err)
@@ -251,6 +280,7 @@ func prefixTransformers(config *apiserverconfig.ResourceConfiguration) ([]value.
 
 			transformer, err = envelopePrefixTransformer(provider.KMS, envelopeService, kmsTransformerPrefixV1)
 		case provider.Identity != nil:
+			// dfy： identity 不执行加密
 			transformer = value.PrefixTransformer{
 				Transformer: identity.NewEncryptCheckTransformer(),
 				Prefix:      []byte{},
@@ -286,11 +316,13 @@ func aesPrefixTransformer(config *apiserverconfig.AESConfiguration, fn blockTran
 
 	keyTransformers := []value.PrefixTransformer{}
 
+	// dfy: 遍历配置文件中的 key 数组
 	for _, keyData := range config.Keys {
 		key, err := base64.StdEncoding.DecodeString(keyData.Secret)
 		if err != nil {
 			return result, fmt.Errorf("could not obtain secret for named key %s: %s", keyData.Name, err)
 		}
+		// dfy: 每个 key 的 secret 形成一个 加密 block
 		block, err := aes.NewCipher(key)
 		if err != nil {
 			return result, fmt.Errorf("error while creating cipher for named key %s: %s", keyData.Name, err)
@@ -299,7 +331,9 @@ func aesPrefixTransformer(config *apiserverconfig.AESConfiguration, fn blockTran
 		// Create a new PrefixTransformer for this key
 		keyTransformers = append(keyTransformers,
 			value.PrefixTransformer{
+				// dfy: 单个 key 的 secret 部分形成的加密 block
 				Transformer: fn(block),
+				// dfy: 单个 key 的名字
 				Prefix:      []byte(keyData.Name + ":"),
 			})
 	}
@@ -310,7 +344,9 @@ func aesPrefixTransformer(config *apiserverconfig.AESConfiguration, fn blockTran
 
 	// Create a PrefixTransformer which shall later be put in a list with other providers
 	result = value.PrefixTransformer{
+		// dfy： key 数组形成的多个加密块，是个数组
 		Transformer: keyTransformer,
+		// dfy: 加密算法的名称 aescbc 或 aesgcm
 		Prefix:      []byte(prefix),
 	}
 	return result, nil
@@ -378,6 +414,7 @@ func envelopePrefixTransformer(config *apiserverconfig.KMSConfiguration, envelop
 		return value.PrefixTransformer{}, err
 	}
 	return value.PrefixTransformer{
+		// dfy: 注意 kms 此处只创建了 1个 transformer，而不是个数组
 		Transformer: envelopeTransformer,
 		Prefix:      []byte(prefix + config.Name + ":"),
 	}, nil

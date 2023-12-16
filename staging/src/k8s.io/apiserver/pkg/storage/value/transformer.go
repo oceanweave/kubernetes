@@ -197,6 +197,7 @@ func (t *prefixTransformers) TransformFromStorage(ctx context.Context, data []by
 // TransformToStorage uses the first transformer and adds its prefix to the data.
 func (t *prefixTransformers) TransformToStorage(ctx context.Context, data []byte, dataCtx Context) ([]byte, error) {
 	start := time.Now()
+	// dfy: 采用第一个 transformer 进行加密（对应就是 yaml 中匹配该资源的第一个 Provider 的第一个 key）
 	transformer := t.transformers[0]
 	prefixedData := make([]byte, len(transformer.Prefix), len(data)+len(transformer.Prefix))
 	copy(prefixedData, transformer.Prefix)

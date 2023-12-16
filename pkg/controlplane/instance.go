@@ -340,17 +340,30 @@ func (c *Config) Complete() CompletedConfig {
 // New returns a new instance of Master from the given config.
 // Certain config fields will be set to a default value if unset.
 // Certain config fields must be specified, including:
-//   KubeletClientConfig
+//
+//	KubeletClientConfig
+//
+// dfy: 根据给定配置 创建一个 master server实例
+/*
+主要逻辑如下。
+
+- 调用 GenericAPIServer 初始化 GenericAPIServer，c.GenericConfig.New上面分析了它的主要实现。
+- 判断是否支持日志相关路由，如果支持，添加/logs路由。
+- 调用m.InstallLegacyAPI将核心 API 资源添加到路由中，该路由对应 apiserver 作为以 . 开头的资源/api。
+- 调用m.InstallAPIs以将扩展 API 资源添加到路由，在 apiserver 中是以 . 开头的资源/apis。
+*/
 func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget) (*Instance, error) {
 	if reflect.DeepEqual(c.ExtraConfig.KubeletClientConfig, kubeletclient.KubeletClientConfig{}) {
 		return nil, fmt.Errorf("Master.New() called with empty config.KubeletClientConfig")
 	}
 
+	// 1. 初始化 GenericAPIServer
 	s, err := c.GenericConfig.New("kube-apiserver", delegationTarget)
 	if err != nil {
 		return nil, err
 	}
 
+	// 2. 注册 logs 相关的路由
 	if c.ExtraConfig.EnableLogsSupport {
 		routes.Logs{}.Install(s.Handler.GoRestfulContainer)
 	}
@@ -392,7 +405,7 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 	}
 
 	// install legacy rest storage
-
+	// 3. 安装 LegacyAPI
 	if err := m.InstallLegacyAPI(&c, c.GenericConfig.RESTOptionsGetter); err != nil {
 		return nil, err
 	}
@@ -426,6 +439,7 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 		admissionregistrationrest.RESTStorageProvider{},
 		eventsrest.RESTStorageProvider{TTL: c.ExtraConfig.EventTTL},
 	}
+	// 4. 安装 APIs
 	if err := m.InstallAPIs(c.ExtraConfig.APIResourceConfigSource, c.GenericConfig.RESTOptionsGetter, restStorageProviders...); err != nil {
 		return nil, err
 	}
@@ -520,6 +534,13 @@ func labelAPIServerHeartbeat(lease *coordinationapiv1.Lease) error {
 }
 
 // InstallLegacyAPI will install the legacy APIs for the restStorageProviders if they are enabled.
+/*
+该方法的主要作用是将核心API注册到路由中，是apiserver初始化过程中最核心的方法之一，但是它的调用链很深，下面会深入分析。将API注册到路由的最终目的是提供外部RESTful API来操作对应的资源，注册API主要分为两步，第一步是为API中的每个资源初始化RESTStorage来操作变更对于后端存储中的数据，第二步是根据每个资源的动词构建对应的路由第二步是根据每个资源的动词构建对应的路由。的主要逻辑m.InstallLegacyAPI如下。
+
+- 调用legacyRESTStorageProvider.NewLegacyRESTStorage为 LegacyAPI 中的每个资源创建 RESTStorage。RESTStorage 的目的是对应每个资源的访问路径及其在后端存储中的操作。
+- 初始化bootstrap-controller并添加到 PostStartHook 中，bootstrap-controller是 apiserver 中的一个控制器，主要功能是创建一些系统需要的命名空间并创建 kubernetes 服务并定期触发相应的同步操作。apiserver 将在启动bootstrap-controller后通过调用 PostStartHook 来启动。
+- 为资源创建 RESTStorage 后，调用m.GenericAPIServer.InstallLegacyAPIGroup为 APIGroup 注册路由信息。方法的调用链InstallLegacyAPIGroup很深，主要是InstallLegacyAPIGroup --> installAPIResources --> InstallREST --> Install --> registerResourceHandlers，而最终的核心路由构建在registerResourceHandlers方法中，比较复杂，它的主要作用是确定哪些操作（如创建、更新等）可以通过通过上一步构建的REST Storage获取资源，并将对应的操作存储到action中，每个action对应一个标准最后，根据actions数组，每个action都会添加一个handler方法并注册到路由中，然后该路由将注册到网络服务。Web 服务最终将按照 go-restful 设计模式注册到容器中。
+*/
 func (m *Instance) InstallLegacyAPI(c *completedConfig, restOptionsGetter generic.RESTOptionsGetter) error {
 	legacyRESTStorageProvider := corerest.LegacyRESTStorageProvider{
 		StorageFactory:              c.ExtraConfig.StorageFactory,
@@ -535,6 +556,8 @@ func (m *Instance) InstallLegacyAPI(c *completedConfig, restOptionsGetter generi
 		ServiceAccountMaxExpiration: c.ExtraConfig.ServiceAccountMaxExpiration,
 		APIAudiences:                c.GenericConfig.Authentication.APIAudiences,
 	}
+	// 创建了多个资源的 RESTStorage
+	// dfy: 创建资源的存储结构（其中就包含着加解密配置的 Transformer），并注册到对应的路径下
 	legacyRESTStorage, apiGroupInfo, err := legacyRESTStorageProvider.NewLegacyRESTStorage(c.ExtraConfig.APIResourceConfigSource, restOptionsGetter)
 	if err != nil {
 		return fmt.Errorf("error building core storage: %v", err)
@@ -552,6 +575,13 @@ func (m *Instance) InstallLegacyAPI(c *completedConfig, restOptionsGetter generi
 	m.GenericAPIServer.AddPostStartHookOrDie(controllerName, bootstrapController.PostStartHook)
 	m.GenericAPIServer.AddPreShutdownHookOrDie(controllerName, bootstrapController.PreShutdownHook)
 
+	/*
+		m.GenericAPIServer.InstallLegacyAPIGroup 的调用链很深，最终为 Group 下的每个 API 资源注册了 handler 和路由信息，即：m.GenericAPIServer. InstallLegacyAPIGroup --> s.installAPIResources --> apiGroupVersion.InstallREST --> installer.Install --> a.registerResourceHandlers. 其中几种方法的工作原理如下所示。
+
+		s.installAPIResources：为每个 API 资源调用添加一个路由到apiGroupVersion.InstallREST.
+		apiGroupVersion.InstallREST: 将restful.WebServic对象添加到容器中。
+		installer.Install: 返回最终restful.WebService对象
+	*/
 	if err := m.GenericAPIServer.InstallLegacyAPIGroup(genericapiserver.DefaultLegacyAPIPrefix, &apiGroupInfo); err != nil {
 		return fmt.Errorf("error in registering group versions: %v", err)
 	}
@@ -565,6 +595,7 @@ type RESTStorageProvider interface {
 }
 
 // InstallAPIs will install the APIs for the restStorageProviders if they are enabled.
+// InstallAPIs和的主要过程InstallLegacyAPI类似
 func (m *Instance) InstallAPIs(apiResourceConfigSource serverstorage.APIResourceConfigSource, restOptionsGetter generic.RESTOptionsGetter, restStorageProviders ...RESTStorageProvider) error {
 	apiGroupsInfo := []*genericapiserver.APIGroupInfo{}
 

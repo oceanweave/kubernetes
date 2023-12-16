@@ -124,13 +124,23 @@ func createAggregatorConfig(
 	return aggregatorConfig, nil
 }
 
+/*
+AggregatorServer主要用于自定义聚合控制器，使CRD自动注册到集群。
+主要逻辑如下。
+
+- 调用aggregatorConfig.Complete().NewWithDelegate以创建 aggregatorServer。
+- 初始化crdRegistrationController和autoRegistrationController。crdRegistrationController负责注册CRD，autoRegistrationController负责自动注册CRDcrdRegistrationController负责注册CRD，autoRegistrationController负责自动向apiserver注册相应的APIServices。
+- autoRegistrationController将和添加crdRegistrationController到 PostStartHook。
+*/
 func createAggregatorServer(aggregatorConfig *aggregatorapiserver.Config, delegateAPIServer genericapiserver.DelegationTarget, apiExtensionInformers apiextensionsinformers.SharedInformerFactory) (*aggregatorapiserver.APIAggregator, error) {
+	// 1. 初始化 aggregatorServer
 	aggregatorServer, err := aggregatorConfig.Complete().NewWithDelegate(delegateAPIServer)
 	if err != nil {
 		return nil, err
 	}
 
 	// create controllers for auto-registration
+	// 2. 初始化 auto-registration Controller
 	apiRegistrationClient, err := apiregistrationclient.NewForConfig(aggregatorConfig.GenericConfig.LoopbackClientConfig)
 	if err != nil {
 		return nil, err

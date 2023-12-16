@@ -163,6 +163,7 @@ func (s *EtcdOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&s.StorageConfig.Transport.TrustedCAFile, "etcd-cafile", s.StorageConfig.Transport.TrustedCAFile,
 		"SSL Certificate Authority file used to secure etcd communication.")
 
+	// dfy: 加密参数的解析对应于此部分
 	fs.StringVar(&s.EncryptionProviderConfigFilepath, "encryption-provider-config", s.EncryptionProviderConfigFilepath,
 		"The file containing configuration for encryption providers to be used for storing secrets in etcd")
 
@@ -190,6 +191,7 @@ func (s *EtcdOptions) ApplyTo(c *server.Config) error {
 		return err
 	}
 	transformerOverrides := make(map[schema.GroupResource]value.Transformer)
+	// dfy: 读取 apiserver 加密配置信息的路径中的文件，并转换为 transformerOverrides 结构
 	if len(s.EncryptionProviderConfigFilepath) > 0 {
 		var err error
 		transformerOverrides, err = encryptionconfig.GetTransformerOverrides(s.EncryptionProviderConfigFilepath)
@@ -202,7 +204,8 @@ func (s *EtcdOptions) ApplyTo(c *server.Config) error {
 	s.StorageConfig.StorageObjectCountTracker = c.StorageObjectCountTracker
 
 	c.RESTOptionsGetter = &SimpleRestOptionsFactory{
-		Options:              *s,
+		Options: *s,
+		// dfy: 此处记录 不同资源的加密解密方法
 		TransformerOverrides: transformerOverrides,
 	}
 	return nil
@@ -283,14 +286,21 @@ type StorageFactoryRestOptionsFactory struct {
 	StorageFactory serverstorage.StorageFactory
 }
 
+// dfy： 此处实现了 GetRESTOptions 的方法
+/*
+options.RESTOptions是一个接口，要找到它的GetRESTOptions方法的实现就必须知道方法options.RESTOptions中初始化时对应CreateKubeAPIServerConfig --> buildGenericConfig --> s.Etcd.ApplyWithStorageFactoryTo的实例，对应的实例RESTOptions是StorageFactoryRestOptionsFactory，所以 PodStoragegenericserver.Config.RESTOptionsGetter初始化时构造的store对象中的实际对象类型是StorageFactoryRestOptionsFactory，而其GetRESTOptions方法如下所示。
+ */
 func (f *StorageFactoryRestOptionsFactory) GetRESTOptions(resource schema.GroupResource) (generic.RESTOptions, error) {
+	// dfy: 此处引用 Override 中的加密配置 transformer 进行配置
 	storageConfig, err := f.StorageFactory.NewConfig(resource)
 	if err != nil {
 		return generic.RESTOptions{}, fmt.Errorf("unable to find storage destination for %v, due to %v", resource, err.Error())
 	}
 
+	// dfy: 用于创建 etcd 实例，后续存储调用 transformer 进行加解密
 	ret := generic.RESTOptions{
-		StorageConfig:             storageConfig,
+		StorageConfig: storageConfig,
+		// dfy: 创建存储实例，step1
 		Decorator:                 generic.UndecoratedStorage,
 		DeleteCollectionWorkers:   f.Options.DeleteCollectionWorkers,
 		EnableGarbageCollection:   f.Options.EnableGarbageCollection,
@@ -310,6 +320,7 @@ func (f *StorageFactoryRestOptionsFactory) GetRESTOptions(resource schema.GroupR
 		if ok && size <= 0 {
 			ret.Decorator = generic.UndecoratedStorage
 		} else {
+			// 调用 generic.StorageDecorator
 			ret.Decorator = genericregistry.StorageWithCacher()
 		}
 	}

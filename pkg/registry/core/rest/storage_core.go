@@ -103,6 +103,10 @@ type LegacyRESTStorage struct {
 	ServiceNodePortAllocator           rangeallocation.RangeRegistry
 }
 
+/*
+NewLegacyRESTStorage
+一个 API Group 下的所有资源都有自己的 REST 实现，所有的 Group 下k8s.io/kubernetes/pkg/registry都有一个 rest 目录，存放着对应资源的 RESTStorage。在该NewLegacyRESTStorage方法中，每个资源对应的storage会由NewRESTor生成NewStorage，这里以pod为例。
+*/
 func (c LegacyRESTStorageProvider) NewLegacyRESTStorage(apiResourceConfigSource serverstorage.APIResourceConfigSource, restOptionsGetter generic.RESTOptionsGetter) (LegacyRESTStorage, genericapiserver.APIGroupInfo, error) {
 	apiGroupInfo := genericapiserver.APIGroupInfo{
 		PrioritizedVersions:          legacyscheme.Scheme.PrioritizedVersionsForGroup(""),
@@ -116,6 +120,7 @@ func (c LegacyRESTStorageProvider) NewLegacyRESTStorage(apiResourceConfigSource 
 	if err != nil {
 		return LegacyRESTStorage{}, genericapiserver.APIGroupInfo{}, err
 	}
+	// 1. LegacyAPI 下的 resource RESTStorage 的初始化
 	restStorage := LegacyRESTStorage{}
 
 	podTemplateStorage, err := podtemplatestore.NewREST(restOptionsGetter)
@@ -168,6 +173,9 @@ func (c LegacyRESTStorageProvider) NewLegacyRESTStorage(apiResourceConfigSource 
 		return LegacyRESTStorage{}, genericapiserver.APIGroupInfo{}, err
 	}
 
+	// 2. pod RESTStorage 的初始化
+	// podstore.NewStorage是一种为 pod 生成存储的方法。该方法的主要作用是为 pod 创建后端存储，并最终返回一个 RESTStorage 对象，该对象调用store.CompleteWithOptions创建 etcd 后端存储。
+	// dfy: 此处为 pod 的每个子资源或操作创建一个对应的 存储结构
 	podStorage, err := podstore.NewStorage(
 		restOptionsGetter,
 		nodeStorage.KubeletConnectionInfo,
@@ -276,6 +284,8 @@ func (c LegacyRESTStorageProvider) NewLegacyRESTStorage(apiResourceConfigSource 
 		return LegacyRESTStorage{}, genericapiserver.APIGroupInfo{}, err
 	}
 
+	// 3. storage 保存 resource http path 与 RESTStorage 对应关系
+	// dfy: pod 的每个子资源或操作都对应一个路径，并关联 上面创建的存储结构
 	storage := map[string]rest.Storage{}
 	if resource := "pods"; apiResourceConfigSource.ResourceEnabled(corev1.SchemeGroupVersion.WithResource(resource)) {
 		storage[resource] = podStorage.Pod

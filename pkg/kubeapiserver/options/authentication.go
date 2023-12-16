@@ -454,6 +454,7 @@ func (o *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 }
 
 // ApplyTo requires already applied OpenAPIConfig and EgressSelector if present.
+// ymjx: 在该函数中， 首先生成认证器的配置文件，然后调用authenticatorConfig.New函数实例化认证器
 func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.AuthenticationInfo, secureServing *genericapiserver.SecureServingInfo, egressSelector *egressselector.EgressSelector, openAPIConfig *openapicommon.Config, openAPIV3Config *openapicommon.Config, extclient kubernetes.Interface, versionedInformer informers.SharedInformerFactory) error {
 	if o == nil {
 		return nil
@@ -503,6 +504,12 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.Authen
 		authenticatorConfig.CustomDial = egressDialer
 	}
 
+	// ymjx: 调用authenticatorConfig.New函数实例化认证器
+	// authenticatorConfig.New函数在实例化认证器的过程中，会根据认证的配置信息（由flags命令行参数传入）决定是否启用认证方法，
+	// 并对启用的认证方法生成对应的HTTP Handler函数，最后通过union函数将已启用的认证器合并到authenticators数组对象中,
+	// authenticators中存放的是已启用的认证器列表
+	// union.New函数 将authenticators合并成一个authenticator认证器，实际上将认证器 列表存放在union结构的Handlers []authenticator.Request对象中
+	// 当客户端请求到达kube-apiserver时， kube-apiserver会遍历认证器 列表， 尝试执行每个认证器， 当有一个认证器返回true时， 则认证成 功。
 	authInfo.Authenticator, openAPIConfig.SecurityDefinitions, err = authenticatorConfig.New()
 	if openAPIV3Config != nil {
 		openAPIV3Config.SecurityDefinitions = openAPIConfig.SecurityDefinitions

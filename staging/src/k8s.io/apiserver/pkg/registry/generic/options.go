@@ -44,6 +44,7 @@ func (opts RESTOptions) GetRESTOptions(schema.GroupResource) (RESTOptions, error
 }
 
 type RESTOptionsGetter interface {
+	// PodStoragegenericserver.Config.RESTOptionsGetter初始化时构造的store对象中的实际对象类型是StorageFactoryRestOptionsFactory
 	GetRESTOptions(resource schema.GroupResource) (RESTOptions, error)
 }
 

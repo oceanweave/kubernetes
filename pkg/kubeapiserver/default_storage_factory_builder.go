@@ -90,6 +90,7 @@ func (c *StorageFactoryConfig) Complete(etcdOptions *serveroptions.EtcdOptions) 
 	c.StorageConfig = etcdOptions.StorageConfig
 	c.DefaultStorageMediaType = etcdOptions.DefaultStorageMediaType
 	c.EtcdServersOverrides = etcdOptions.EtcdServersOverrides
+	// dfy: 此处是加密配置文件路径信息
 	c.EncryptionProviderConfigFilepath = etcdOptions.EncryptionProviderConfigFilepath
 	return &completedStorageFactoryConfig{c}, nil
 }
@@ -113,6 +114,9 @@ func (c *completedStorageFactoryConfig) New() (*serverstorage.DefaultStorageFact
 		c.APIResourceConfig,
 		SpecialDefaultResourcePrefixes)
 
+	/*
+		这些代码的目的是配置 API Server 存储，以便同时支持两个不同的 API 资源版本。这在某些情况下可能是由于 Kubernetes 的 API 的演进导致资源从一个 API 组迁移到另一个 API 组，而在迁移过程中需要保持向后兼容性。在这里，AddCohabitatingResources 可能是一种处理两个 API 资源版本共存的机制。
+	*/
 	storageFactory.AddCohabitatingResources(networking.Resource("networkpolicies"), extensions.Resource("networkpolicies"))
 	storageFactory.AddCohabitatingResources(apps.Resource("deployments"), extensions.Resource("deployments"))
 	storageFactory.AddCohabitatingResources(apps.Resource("daemonsets"), extensions.Resource("daemonsets"))
@@ -133,11 +137,14 @@ func (c *completedStorageFactoryConfig) New() (*serverstorage.DefaultStorageFact
 		servers := strings.Split(tokens[1], ";")
 		storageFactory.SetEtcdLocation(groupResource, servers)
 	}
+	// dfy: 若加密路径不为空，就将配置文件转换为对应的 加解密函数
 	if len(c.EncryptionProviderConfigFilepath) != 0 {
+		// dfy: 读取加密路径下的配置文件，并转换为 对应资源的加密解密函数，也可以理解为 转换器
 		transformerOverrides, err := encryptionconfig.GetTransformerOverrides(c.EncryptionProviderConfigFilepath)
 		if err != nil {
 			return nil, err
 		}
+		// dfy: 将其配置到 storageFactory 上
 		for groupResource, transformer := range transformerOverrides {
 			storageFactory.SetTransformer(groupResource, transformer)
 		}

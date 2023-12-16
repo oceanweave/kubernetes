@@ -249,6 +249,11 @@ func startCompactorOnce(c storagebackend.TransportConfig, interval time.Duration
 	}, nil
 }
 
+/*
+其中newETCD3Storage，首先调用newETCD3Client创建etcd的客户端，最后使用官方的etcd客户端工具clientv3创建客户端。
+
+至此，pod资源中store的构建分析基本完成，不同资源对应一个REST对象，依次引用该genericregistry.Store对象，最后初始化`genericregistry。在分析了 store 的初始化之后，还有一个重要的步骤是路由的注册。路由注册的主要过程是根据不同的动词为资源建立一个http路径，并将路径绑定到对应的handler上。
+ */
 func newETCD3Storage(c storagebackend.ConfigForResource, newFunc func() runtime.Object) (storage.Interface, DestroyFunc, error) {
 	stopCompactor, err := startCompactorOnce(c.Transport, c.CompactionInterval)
 	if err != nil {
@@ -284,6 +289,7 @@ func newETCD3Storage(c storagebackend.ConfigForResource, newFunc func() runtime.
 	if transformer == nil {
 		transformer = value.IdentityTransformer
 	}
+	// dfy: 创建存储实例，step5
 	return etcd3.New(client, c.Codec, newFunc, c.Prefix, c.GroupResource, transformer, c.Paging, c.LeaseManagerConfig), destroyFunc, nil
 }
 

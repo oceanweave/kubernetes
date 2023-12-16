@@ -92,6 +92,7 @@ func NewStorage(optsGetter generic.RESTOptionsGetter, k client.ConnectionInfoGet
 		TriggerFunc: map[string]storage.IndexerFunc{"spec.nodeName": registrypod.NodeNameTriggerFunc},
 		Indexers:    registrypod.Indexers(),
 	}
+	// 调用store.CompleteWithOptions创建后端存储。
 	if err := store.CompleteWithOptions(options); err != nil {
 		return PodStorage{}, err
 	}
@@ -103,6 +104,9 @@ func NewStorage(optsGetter generic.RESTOptionsGetter, k client.ConnectionInfoGet
 	ephemeralContainersStore.UpdateStrategy = registrypod.EphemeralContainersStrategy
 
 	bindingREST := &BindingREST{store: store}
+	// PodStorage 对象
+	// 可以看到最终返回的对象中对 pod 的不同操作都是一个 REST 对象
+	// dfy: 此处为 pod 的每个子资源或操作创建一个对应的 存储结构
 	return PodStorage{
 		Pod:                 &REST{store, proxyTransport},
 		Binding:             &BindingREST{store: store},

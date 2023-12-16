@@ -188,6 +188,8 @@ func (config Config) New() (authenticator.Request, *spec.SecurityDefinitions, er
 
 	if len(tokenAuthenticators) > 0 {
 		// Union the token authenticators
+		// 通过union函数将已启用的认证器合并到authenticators数组对象中,authenticators中存放的是已启用的认证器列表
+		// union.New函数 将authenticators合并成一个authenticator认证器，实际上将认证器列表存放在union结构的Handlers []authenticator.Request对象中
 		tokenAuth := tokenunion.New(tokenAuthenticators...)
 		// Optionally cache authentication results
 		if config.TokenSuccessCacheTTL > 0 || config.TokenFailureCacheTTL > 0 {

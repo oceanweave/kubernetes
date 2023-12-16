@@ -49,6 +49,16 @@ import (
 
 var namespaceGVR = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
 
+/*
+createHandler是向后端存储写入数据的方法，对资源的操作有权限控制，在里面会先执行and操作，然后调用该createHandler方法decoder完成资源的创建，在方法，最后将数据保存到后端存储。该操作执行 kube-apiserver 中的准入插件。admission-plugins 初始化为admissionChain in ，初始化调用链为，最后in将所有启用的插件包装成admissionChain ，这里要执行的admit 操作就是admission-plugins 中的admit 操作。admissioncreatecreatevalidateadmitCreateKubeAPIServerConfigCreateKubeAPIServerConfig --> buildGenericConfig --> s.Admission.ApplyTo --> a.GenericAdmission.ApplyTo --> a.Plugins.NewFromPluginsNewFromPlugins
+
+调用的create方法createHandler是genericregistry.Store对象的方法。genericregistry.Store在 RESTStorage 的每个资源初始化时都会引入该对象中
+
+所有操作createHandler都是本文开头提到的请求流程，如下。
+
+v1beta1 ⇒ internal ⇒    |    ⇒       |    ⇒  v1  ⇒ json/yaml ⇒ etcd
+                     admission    validation
+ */
 func createHandler(r rest.NamedCreater, scope *RequestScope, admit admission.Interface, includeName bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		// For performance tracking purposes.
@@ -87,6 +97,7 @@ func createHandler(r rest.NamedCreater, scope *RequestScope, admit admission.Int
 		}
 
 		gv := scope.Kind.GroupVersion()
+		// 1. 得到合适的 SerializerInfo
 		s, err := negotiation.NegotiateInputSerializer(req, false, scope.Serializer)
 		if err != nil {
 			scope.err(err, w, req)
@@ -122,8 +133,10 @@ func createHandler(r rest.NamedCreater, scope *RequestScope, admit admission.Int
 			decodeSerializer = s.StrictSerializer
 		}
 
+		// 2. 找到合适的 decoder
 		decoder := scope.Serializer.DecoderToVersion(decodeSerializer, scope.HubGroupVersion)
 		trace.Step("About to convert to expected version")
+		// 3. decoder 解码
 		obj, gvk, err := decoder.Decode(body, &defaultGVK, original)
 		if err != nil {
 			strictError, isStrictError := runtime.AsStrictDecodingError(err)
@@ -172,7 +185,9 @@ func createHandler(r rest.NamedCreater, scope *RequestScope, admit admission.Int
 		}
 
 		trace.Step("About to store object in database")
+		// 4. 执行 admit 操作，即执行 kube-apiserver 启动时加载的 admission-plugins
 		admissionAttributes := admission.NewAttributesRecord(obj, nil, scope.Kind, namespace, name, scope.Resource, scope.Subresource, admission.Create, options, dryrun.IsDryRun(options.DryRun), userInfo)
+		// 执行 create 操作
 		requestFunc := func() (runtime.Object, error) {
 			return r.Create(
 				ctx,
@@ -184,6 +199,7 @@ func createHandler(r rest.NamedCreater, scope *RequestScope, admit admission.Int
 		}
 		// Dedup owner references before updating managed fields
 		dedupOwnerReferencesAndAddWarning(obj, req.Context(), false)
+		// 5. 执行 create 操作
 		result, err := finisher.FinishRequest(ctx, func() (runtime.Object, error) {
 			if scope.FieldManager != nil {
 				liveObj, err := scope.Creater.New(scope.Kind)
@@ -200,6 +216,7 @@ func createHandler(r rest.NamedCreater, scope *RequestScope, admit admission.Int
 			}
 			// Dedup owner references again after mutating admission happens
 			dedupOwnerReferencesAndAddWarning(obj, req.Context(), true)
+			// 执行 create 操作
 			result, err := requestFunc()
 			// If the object wasn't committed to storage because it's serialized size was too large,
 			// it is safe to remove managedFields (which can be large) and try again.

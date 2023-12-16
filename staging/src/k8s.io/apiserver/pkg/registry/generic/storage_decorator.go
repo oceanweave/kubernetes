@@ -47,6 +47,7 @@ func UndecoratedStorage(
 	getAttrsFunc storage.AttrFunc,
 	trigger storage.IndexerFuncs,
 	indexers *cache.Indexers) (storage.Interface, factory.DestroyFunc, error) {
+	// dfy: 创建存储实例，step2
 	return NewRawStorage(config, newFunc)
 }
 
@@ -54,5 +55,6 @@ func UndecoratedStorage(
 // two layer of same storage interface.
 // TODO: Once cacher is enabled on all registries (event registry is special), we will remove this method.
 func NewRawStorage(config *storagebackend.ConfigForResource, newFunc func() runtime.Object) (storage.Interface, factory.DestroyFunc, error) {
+	// dfy: 创建存储实例，step3
 	return factory.Create(*config, newFunc)
 }

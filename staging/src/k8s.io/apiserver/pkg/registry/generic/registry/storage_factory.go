@@ -34,6 +34,9 @@ import (
 )
 
 // Creates a cacher based given storageConfig.
+/*
+在genericregistry.StorageWithCacher一个不同的方法被调用，它最终调用factory.Create来初始化存储实例，调用链是：genericregistry.StorageWithCacher --> generic. NewRawStorage --> factory.Create.
+ */
 func StorageWithCacher() generic.StorageDecorator {
 	return func(
 		storageConfig *storagebackend.ConfigForResource,
@@ -45,6 +48,7 @@ func StorageWithCacher() generic.StorageDecorator {
 		triggerFuncs storage.IndexerFuncs,
 		indexers *cache.Indexers) (storage.Interface, factory.DestroyFunc, error) {
 
+		// 继续调用
 		s, d, err := generic.NewRawStorage(storageConfig, newFunc)
 		if err != nil {
 			return s, d, err

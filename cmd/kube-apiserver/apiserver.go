@@ -30,7 +30,15 @@ import (
 )
 
 func main() {
+	// dfy: 构建 apiserver 参数读取命令
 	command := app.NewAPIServerCommand()
+	/* dfy:
+	在 Cobra 中，Run 函数和 RunE 函数是可以共存的，但是它们不会同时执行。
+	当你执行一个 Cobra 命令时，Cobra 会按照以下规则执行其中一个：
+	1. 如果存在 Run 函数： Cobra 将执行 Run 函数，忽略 RunE。
+	2. 如果存在 RunE 函数但不存在 Run 函数： Cobra 将执行 RunE 函数。
+	这意味着，如果同时存在 Run 和 RunE 函数，Cobra 会优先选择执行 Run 函数。只有在不存在 Run 函数时，才会考虑执行 RunE 函数。
+	*/
 	code := cli.Run(command)
 	os.Exit(code)
 }

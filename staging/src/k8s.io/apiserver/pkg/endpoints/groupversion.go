@@ -113,6 +113,7 @@ func (g *APIGroupVersion) InstallREST(container *restful.Container) ([]*storagev
 		minRequestTimeout: g.MinRequestTimeout,
 	}
 
+	// installer.Install: 返回最终restful.WebService对象
 	apiResources, resourceInfos, ws, registrationErrors := installer.Install()
 	versionDiscoveryHandler := discovery.NewAPIVersionHandler(g.Serializer, g.GroupVersion, staticLister{apiResources})
 	versionDiscoveryHandler.AddToWebService(ws)
