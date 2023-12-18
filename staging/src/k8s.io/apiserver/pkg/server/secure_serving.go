@@ -162,6 +162,11 @@ func (s *SecureServingInfo) Serve(handler http.Handler, shutdownTimeout time.Dur
 		return nil, nil, err
 	}
 
+	// ymjx:
+	// 在自定义的http.Server结构体中，Addr字段用于配置监控地址与 端口，该地址与端口来自用户命令行参数（--insecure-bind-address 和 --insecure-port 参 数 ） ；
+	// Handler 字 段 用 于 配 置 Handler 函 数 ； MaxHeaderBytes字段用于配置请求头的最大字节数。
+	// HTTPS服务在http.Server上增加了TLSConfig配置， TLSConfig用 于配置相关证书，
+	// 可以通过命令行相关参数（--client-ca-file、 -tls-private-key-file、--tls-cert-file参数）进行配置
 	secureServer := &http.Server{
 		Addr:           s.Listener.Addr().String(),
 		Handler:        handler,
@@ -208,6 +213,7 @@ func (s *SecureServingInfo) Serve(handler http.Handler, shutdownTimeout time.Dur
 	secureServer.ErrorLog = tlsErrorLogger
 
 	klog.Infof("Serving securely on %s", secureServer.Addr)
+	// ymjx: 启动HTTP服务
 	return RunServer(secureServer, s.Listener, shutdownTimeout, stopCh)
 }
 
@@ -228,6 +234,11 @@ func RunServer(
 	}
 
 	// Shutdown server gracefully.
+	// ymjx:
+	// 在Kubernetes API Server的代码中还实现了平滑关闭HTTP 服务的功能，
+	// 利用Go语言标准库的HTTP Server.Shutdown函数可以在 不干扰任何活跃连接的情况下关闭服务。
+	// 其原理是，首先关闭所有的 监听listener， 然后关闭所有的空闲连接， 接着无限期地等待所有连 接变成空闲状态并关闭。
+	// 如果设置带有超时的Context，将在HTTP服务 关闭之前返回Context超时错误
 	serverShutdownCh, listenerStoppedCh := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(serverShutdownCh)
@@ -247,6 +258,9 @@ func RunServer(
 			listener = tls.NewListener(listener, server.TLSConfig)
 		}
 
+		// ymjx: 启动HTTP服务
+		// 在 RunServer 函 数 中 ， 通 过 Go 语 言 标 准 库 的 serverServe 监 听 listener ，
+		// 并在运行过程中为每个连接创建一个goroutine。goroutine读取请求，然后调用Handler函数来处理并响应请求。
 		err := server.Serve(listener)
 
 		msg := fmt.Sprintf("Stopped listening on %s", ln.Addr().String())

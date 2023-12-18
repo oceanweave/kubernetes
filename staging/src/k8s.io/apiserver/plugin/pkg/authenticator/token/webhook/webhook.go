@@ -96,6 +96,20 @@ func newWithBackoff(tokenReview tokenReviewer, retryBackoff wait.Backoff, implic
 }
 
 // AuthenticateToken implements the authenticator.Token interface.
+// ymjx:
+// WebhookTokenAuth认证
+//
+// Webhook也被称为钩子，是一种基于HTTP协议的回调机制，当客户 端发送的认证请求到达kube-apiserver时， kube-apiserver回调钩子方法，
+// 将验证信息发送给远程的Webhook服务器进行认证， 然后根据 Webhook服务器返回的状态码来判断是否认证成功
+// 1.启用WebhookTokenAuth认证
+// kube-apiserver通过指定如下参数启用WebhookTokenAuth认证。
+// --authentication-token-webhook-config-file ：Webhook配置文件描述了如何访问远程Webhook服务。
+// --authentication-token-webhook-cache-ttl ：缓存认证时间，默认值为2分钟。
+// 2.WebhookTokenAuth认证实现
+// 在进行WebhookTokenAuth认证时， 首先从缓存中查找是否已有缓存认证，如果有则直接返回，
+// 如果没有则通过a.authenticator.AuthenticateToken对远程的Webhook服务器进行验证。
+// 请求远程的Webhook服务器，通过w.tokenReview.Create（RESTClient）函数发送Post请求，并在请求体（Body）中携带认证信息。
+// 在验证Webhook服务器认证之后，返回的Status.Authenticated字段为true，表示认证成功。
 func (w *WebhookTokenAuthenticator) AuthenticateToken(ctx context.Context, token string) (*authenticator.Response, bool, error) {
 	// We take implicit audiences of the API server at WebhookTokenAuthenticator
 	// construction time. The outline of how we validate audience here is:

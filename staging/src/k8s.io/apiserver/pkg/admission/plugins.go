@@ -33,8 +33,20 @@ import (
 // The config parameter provides an io.Reader handler to the factory in
 // order to load specific configurations. If no configuration is provided
 // the parameter is nil.
+// ymjx:
+// 其中Factory为准入控制器实现的接口定义，它接收准入控制器的 config配置信息，
+// 通过--admission-control-config-file参数指定准入控制器的配置文件，返回准入控制器的插件实现。
+// Plugins数据结构 提供了Register方法，为外部提供了准入控制器的注册方法。
+// kube-apiserver提供了31种准入控制器， kube-apiserver组件在 启动时分别在两个位置注册它们:
+// - vendor/k8s.io/apiserver/pkg/server/plugins.go
+// - pkg/kubeapiserver/options/plugins.go
 type Factory func(config io.Reader) (Interface, error)
 
+// ymjx:
+// kube-apiserver在启动时注册所有准入控制器， 准入控制器通过 Plugins数据结构统一注册、 存放、 管理所有的准入控制器。
+// Plugins 数据结构如下：
+// - registry: ：以键值对形式存放插件， key为准入控制器的名称， 例如AlwaysPullImages、 LimitRanger等；value为对应的准入控制器名称的代码实现。
+// - lock: 用于保护registry字段的并发一致性。
 type Plugins struct {
 	lock     sync.Mutex
 	registry map[string]Factory

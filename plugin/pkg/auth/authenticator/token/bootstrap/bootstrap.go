@@ -56,8 +56,7 @@ type TokenAuthenticator struct {
 // tokenErrorf prints a error message for a secret that has matched a bearer
 // token but fails to meet some other criteria.
 //
-//    tokenErrorf(secret, "has invalid value for key %s", key)
-//
+//	tokenErrorf(secret, "has invalid value for key %s", key)
 func tokenErrorf(s *corev1.Secret, format string, i ...interface{}) {
 	format = fmt.Sprintf("Bootstrap secret %s/%s matching bearer token ", s.Namespace, s.Name) + format
 	klog.V(3).Infof(format, i...)
@@ -69,26 +68,38 @@ func tokenErrorf(s *corev1.Secret, format string, i ...interface{}) {
 //
 // All secrets must be of type "bootstrap.kubernetes.io/token". An example secret:
 //
-//     apiVersion: v1
-//     kind: Secret
-//     metadata:
-//       # Name MUST be of form "bootstrap-token-( token id )".
-//       name: bootstrap-token-( token id )
-//       namespace: kube-system
-//     # Only secrets of this type will be evaluated.
-//     type: bootstrap.kubernetes.io/token
-//     data:
-//       token-secret: ( private part of token )
-//       token-id: ( token id )
-//       # Required key usage.
-//       usage-bootstrap-authentication: true
-//       auth-extra-groups: "system:bootstrappers:custom-group1,system:bootstrappers:custom-group2"
-//       # May also contain an expiry.
+//	apiVersion: v1
+//	kind: Secret
+//	metadata:
+//	  # Name MUST be of form "bootstrap-token-( token id )".
+//	  name: bootstrap-token-( token id )
+//	  namespace: kube-system
+//	# Only secrets of this type will be evaluated.
+//	type: bootstrap.kubernetes.io/token
+//	data:
+//	  token-secret: ( private part of token )
+//	  token-id: ( token id )
+//	  # Required key usage.
+//	  usage-bootstrap-authentication: true
+//	  auth-extra-groups: "system:bootstrappers:custom-group1,system:bootstrappers:custom-group2"
+//	  # May also contain an expiry.
 //
 // Tokens are expected to be of the form:
 //
-//     ( token-id ).( token-secret )
+//	( token-id ).( token-secret )
 //
+// ymjx:
+// BootstrapToken认证
+// 当Kubernetes集群中有非常多的节点时，手动为每个节点配置TLS 认证比较烦琐， 为此Kubernetes提供了BootstrapToken认证，
+// 其也被 称为引导Token。客户端的Token信息与服务端的Token相匹配，则认证 通过，自动为节点颁发证书，这是一种引导Token的机制。
+// 客户端发送 的请求头示例如下： Authorization: Bearer 07401b.f395accd246ae52d
+// 请求头的key为Authorization， value为Bearer<TOKENS>， 其中 TOKENS的表现形式为[a-z0-9]{6}.[a-z0-9]{16}。
+// 第一个组是Token ID，第二个组是Token Secret。
+// 1.启用BootstrapToken认证
+// kube-apiserver通过指定--enable-bootstrap-token-auth参数启 用BootstrapToken认证。
+// 2.BootstrapToken认证实现
+// 在进行BootstrapToken认证时， 通过paseToken函数解析出Token ID和Token Secret，
+// 验证Token Secret中的Expire（过期）、 Data、 Type等，认证失败会返回false，而认证成功会返回true。
 func (t *TokenAuthenticator) AuthenticateToken(ctx context.Context, token string) (*authenticator.Response, bool, error) {
 	tokenID, tokenSecret, err := bootstraptokenutil.ParseToken(token)
 	if err != nil {

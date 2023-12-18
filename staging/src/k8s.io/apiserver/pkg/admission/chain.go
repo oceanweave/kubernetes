@@ -20,6 +20,14 @@ import "context"
 
 // chainAdmissionHandler is an instance of admission.NamedHandler that performs admission control using
 // a chain of admission handlers
+// ymjx:
+//
+// kube-apiserver中的所有已启用的准入控制器（Admit方法及Validate方法）
+// 由vendor/k8s.io/apiserver/pkg/admission/chain.go下的chainAdmissionHandler[]Interface数据结构管理
+//
+// 假设kube-apiserver开启了AlwaysPullImages和PodNodeSelector准入控制器，
+// 当客户端发送请求给kube-apiserver时，该请求会进入AdmissionControllerHandler函数（处理准入控制器相关的Handler函数）。
+// 在AdmissionControllerHandler中，会遍历已启用的准入控制器列表，按顺序尝试执行每个准入控制器，执行所有的变更操作
 type chainAdmissionHandler []Interface
 
 // NewChainHandler creates a new chain handler from an array of handlers. Used for testing.
@@ -28,6 +36,7 @@ func NewChainHandler(handlers ...Interface) chainAdmissionHandler {
 }
 
 // Admit performs an admission control check using a chain of handlers, and returns immediately on first error
+// ymjx: Admit函数会遍历已启用的准入控制器列表，并执行变更操作的准 入控制器（即拥有Admit方法的准入控制器）
 func (admissionHandler chainAdmissionHandler) Admit(ctx context.Context, a Attributes, o ObjectInterfaces) error {
 	for _, handler := range admissionHandler {
 		if !handler.Handles(a.GetOperation()) {
@@ -44,6 +53,7 @@ func (admissionHandler chainAdmissionHandler) Admit(ctx context.Context, a Attri
 }
 
 // Validate performs an admission control check using a chain of handlers, and returns immediately on first error
+// ymjx: 以同样的方式执行Validate函数， Validate函数会遍历已启用的 准入控制器列表， 并执行验证操作的准入控制器（即拥有Validate方 法的准入控制器）
 func (admissionHandler chainAdmissionHandler) Validate(ctx context.Context, a Attributes, o ObjectInterfaces) error {
 	for _, handler := range admissionHandler {
 		if !handler.Handles(a.GetOperation()) {

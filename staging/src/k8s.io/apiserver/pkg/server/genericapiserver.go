@@ -391,6 +391,13 @@ func (s *GenericAPIServer) PrepareRun() preparedGenericAPIServer {
 
 // Run spawns the secure http server. It only returns if stopCh is closed
 // or the secure port cannot be listened on initially.
+// ymjx:
+// 进程的优雅关闭
+// 当进程关闭时， kube-apiserver很可能正在处理很多连接， 如果 此时直接关闭服务，这些连接将会断掉，影响用户体验，
+// 所以需要在 关闭进程之前做一些清理操作，以实现进程的优雅关闭。
+//
+// Run函数是真正实现kube-apiserver启动HTTP服务的函数，并通过stopCh阻塞了当前进程，当按下了Ctrl+C组合键或发送了kill-15信号时，
+// stopCh会处于非阻塞状态，此时意味着进程需要退出。退出之前需要做进程清理操作，例如关闭hook函数，等待当前正在处理的请求完成之后再退出进程。
 func (s preparedGenericAPIServer) Run(stopCh <-chan struct{}) error {
 	delayedStopCh := s.lifecycleSignals.AfterShutdownDelayDuration
 	shutdownInitiatedCh := s.lifecycleSignals.ShutdownInitiated
@@ -531,6 +538,7 @@ func (s preparedGenericAPIServer) NonBlockingRun(stopCh <-chan struct{}, shutdow
 	var listenerStoppedCh <-chan struct{}
 	if s.SecureServingInfo != nil && s.Handler != nil {
 		var err error
+		// ymjx: Kubernetes API Server通过自定 义http.Server的方式创建HTTP服务的过程
 		stoppedCh, listenerStoppedCh, err = s.SecureServingInfo.Serve(s.Handler, shutdownTimeout, internalStopCh)
 		if err != nil {
 			close(internalStopCh)
@@ -556,6 +564,9 @@ func (s preparedGenericAPIServer) NonBlockingRun(stopCh <-chan struct{}, shutdow
 	s.RunPostStartHooks(stopCh)
 
 	// 4. 向 systemd 发送 ready 信号
+	// ymjx: 早期Linux系统使用initd进程负责Linux的进程管理，后期Systemd取代了initd，成为系统的第一个进程（即PID为1），其他进程都是它的子进程。
+	// 如果进程被systemd管理，需要向该进程报告当前进程的状态。
+	// systemd.SdNotify用于守护进程向systemd报告进程状态的变化，其中一项是向systemd报告启动已完成的消息（即READY=1）。更多详细信息请参考sd_notify手册。
 	if _, err := systemd.SdNotify(true, "READY=1\n"); err != nil {
 		klog.Errorf("Unable to send systemd daemon successful start message: %v\n", err)
 	}

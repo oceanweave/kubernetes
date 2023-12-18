@@ -226,6 +226,17 @@ func resourceMatches(p abac.Policy, a authorizer.Attributes) bool {
 }
 
 // Authorize implements authorizer.Authorize
+// ymjx: ABAC授权
+// ABAC授权器基于属性的访问控制（Attribute-BasedAccessControl，ABAC）定义了访问控制范例，其中通过将属性组合在一起的策略来向用户授予操作权限。
+// 1.启用ABAC授权 kube-apiserver通过指定如下参数启用ABAC授权。
+//
+//		--authorization-mode=ABAC ：启用ABAC授权器。
+//		--authorization-policy-file ：基于ABAC模式，指定策略文件，该文件使用JSON格式进行描述，每一行都是一个策略对象。ABAC模式策略文件的定义如下
+//	   ("apiversion": "abac.authorization. kubernetes.io/vlbetal", "kind": "Policy", "spec": {"user": "Derek", " namespace" : "*". "resource": "*" "apiGroup"： "*"}}
+//	   通过如上策略，Derek用户可以对所有资源做任何操作。
+//
+// 2.ABAC授权实现
+// 在进行ABAC授权时， 遍历所有的策略， 通过matches函数进行匹 配，如果授权成功，返回DecisionAllow决策状态。
 func (pl PolicyList) Authorize(ctx context.Context, a authorizer.Attributes) (authorizer.Decision, string, error) {
 	for _, p := range pl {
 		if matches(*p, a) {
@@ -239,6 +250,7 @@ func (pl PolicyList) Authorize(ctx context.Context, a authorizer.Attributes) (au
 }
 
 // RulesFor returns rules for the given user and namespace.
+// ymjx: 另外，ABAC的规则解析器会根据每一个策略将资源类型的规则列表（ResourceRuleInfo）和非资源类型的规则列表（NonResourceRuleInfo）都设置为该用户有权限操作的资源版本、资源及资源操作方法。
 func (pl PolicyList) RulesFor(user user.Info, namespace string) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
 	var (
 		resourceRules    []authorizer.ResourceRuleInfo

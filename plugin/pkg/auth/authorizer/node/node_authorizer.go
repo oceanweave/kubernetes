@@ -38,17 +38,17 @@ import (
 )
 
 // NodeAuthorizer authorizes requests from kubelets, with the following logic:
-// 1. If a request is not from a node (NodeIdentity() returns isNode=false), reject
-// 2. If a specific node cannot be identified (NodeIdentity() returns nodeName=""), reject
-// 3. If a request is for a secret, configmap, persistent volume or persistent volume claim, reject unless the verb is get, and the requested object is related to the requesting node:
-//    node <- configmap
-//    node <- pod
-//    node <- pod <- secret
-//    node <- pod <- configmap
-//    node <- pod <- pvc
-//    node <- pod <- pvc <- pv
-//    node <- pod <- pvc <- pv <- secret
-// 4. For other resources, authorize all nodes uniformly using statically defined rules
+//  1. If a request is not from a node (NodeIdentity() returns isNode=false), reject
+//  2. If a specific node cannot be identified (NodeIdentity() returns nodeName=""), reject
+//  3. If a request is for a secret, configmap, persistent volume or persistent volume claim, reject unless the verb is get, and the requested object is related to the requesting node:
+//     node <- configmap
+//     node <- pod
+//     node <- pod <- secret
+//     node <- pod <- configmap
+//     node <- pod <- pvc
+//     node <- pod <- pvc <- pv
+//     node <- pod <- pvc <- pv <- secret
+//  4. For other resources, authorize all nodes uniformly using statically defined rules
 type NodeAuthorizer struct {
 	graph      *Graph
 	identifier nodeidentifier.NodeIdentifier
@@ -90,6 +90,18 @@ func (r *NodeAuthorizer) RulesFor(user user.Info, namespace string) ([]authorize
 	return nil, nil, false, nil
 }
 
+// ymjx: Node授权
+// Node授权器也被称为节点授权，是一种特殊用途的授权机制，专门授权由kubelet组件发出的API请求。
+// Node授权器基于RBAC授权机制实现，对kubelet组件进行基于system：node内置角色的权限控制。
+// system：node内置角色的权限定义在NodeRules函数中，代码路径：plugin/pkg/ auth/ authorizer/rbac/bootstrappolicy/policy. go
+// NodeRules函数定义了system：node内置角色的权限，它拥有许多 资源的操作权限，例如Configmap、Secret、Service、Pod等资源。
+// 例 如， 在上面的代码中， 针对Pod资源的get、 list、 watch、 create、 delete等操作权限。
+// 1.启用Node授权
+// kube-apiserver通过指定如下参数启用Node授权。
+// --authorization-mode=Node，RBAC：启用Node授权器与RBAC授 权器。
+// 2.Node授权实现
+// 在进行Node授权时，通过r.identifier.NodeIdentity函数获取角色信息，并验证其是否为system：node内置角色，
+// nodeName的表现形式为system：node：<nodeName>。通过rbac.RulesAllow函数进行RBAC授权，如果授权成功，返回DecisionAllow决策状态。
 func (r *NodeAuthorizer) Authorize(ctx context.Context, attrs authorizer.Attributes) (authorizer.Decision, string, error) {
 	nodeName, isNode := r.identifier.NodeIdentity(attrs.GetUser())
 	if !isNode {

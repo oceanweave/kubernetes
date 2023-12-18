@@ -144,5 +144,7 @@ func (config Config) New() (authorizer.Authorizer, authorizer.RuleResolver, erro
 		}
 	}
 
+	// ymjx: authorizers中存放的是已启用的授权器列表， ruleResolvers中 存放的是已启用的授权器规则解析器，
+	// 实际上分别将它们存放在union 结构的[]authorizer.Authorizer和[]authorizer.RuleResolver对象 中
 	return union.New(authorizers...), union.NewRuleResolvers(ruleResolvers...), nil
 }

@@ -126,6 +126,34 @@ type Interface interface {
 	Handles(operation Operation) bool
 }
 
+// ymjx: 准入控制器
+// 准入控制器会在验证和授权请求之后，对象被持久化之前，拦截kube-apiserver的请求，拦截后的请求进入准入控制器中处理，
+// 对请求的资源对象执行自定义（校验、修改或拒绝等）操作。准入控制器以插件的形式运行在kube-apiserver进程中，
+// 插件化的好处在于可扩展插件并单独启用/禁用指定插件，也可以将每个准入控制器称为准入控制器插件。
+//
+// kube-apiserver支持多种准入控制器机制，并支持同时开启多个准入控制器功能，如果开启了多个准入控制器，则按照顺序执行准入控制器。
+//
+// AlwaysAdmit、AlwaysDeny、PersistentVolumeLabel准入控制器在当前Kubernetes系统中已被弃用。
+// 可通过--enable-admissionplugins参数指定启用的准入控制器列表，通过--disable-admissionplugins参数指定禁用的准入控制器列表。
+// 客户端发起一个请求，在请求经过准入控制器列表时，只要有一个准入控制器拒绝了该请求，则整个请求被拒绝（HTTP403Forbidden）并返回一个错误给客户端。
+//
+// kube-apiserver目前支持如下两种准入控制器。
+// - 变更准入控制器 (Mutating Admission Controller)：用于交更信息，能够修改用户提交的资源对象信息。
+// - 验证准入控制器 (Validating Admission Controller ) 用于身份验证，能够验证用户提交的资源对象信息。
+// 提示 ：变更准入控制器运行在验证准入控制器之前。
+// 变更准入控制器和验证准入控制器接口定义分别是 MutationInterface和ValidationInterface
+//
+// 变更准入控制器接口拥有Admit方法，验证准入控制器接口拥有Validate方法。
+// 有些准入控制器可能同时实现了Admit和Validate方法，能够执行变更操作，也能够执行验证操作，例如AlwaysPullImages准入控制器。
+//
+// kube-apiserver中的所有已启用的准入控制器（Admit方法及Validate方法）
+// 由vendor/k8s.io/apiserver/pkg/admission/chain.go下的chainAdmissionHandler[]Interface数据结构管理
+//
+// 假设kube-apiserver开启了AlwaysPullImages和PodNodeSelector准入控制器，
+// 当客户端发送请求给kube-apiserver时，该请求会进入AdmissionControllerHandler函数（处理准入控制器相关的Handler函数）。
+// 在AdmissionControllerHandler中，会遍历已启用的准入控制器列表，按顺序尝试执行每个准入控制器，执行所有的变更操作
+// 遍历函数路径：vendor/k8s.io/apiserver/pkg/admission/chain.go
+// admission 插件路径： plugin/pkg/admission
 type MutationInterface interface {
 	Interface
 

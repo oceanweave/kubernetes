@@ -90,6 +90,17 @@ func NewCSV(path string) (*TokenAuthenticator, error) {
 	}, nil
 }
 
+// AuthenticateToken
+// ymjx:
+// Token也被称为令牌，服务端为了验证客户端的身份，需要客户端 向服务端提供一个可靠的验证信息， 这个验证信息就是Token。
+// TokenAuth是基于Token的认证，Token一般是一个字符串。
+// 1.启用TokenAuth认证
+// kube-apiserver通过指定--token-auth-file参数启用TokenAuth 认证。
+// TOKEN_FILE是一个CSV文件， 每个用户在CSV中的表现形式为 token、user、userid、group ，示例如下：
+// a0d715cf548£6659662f2b8019614164,kubelet-bootstrap, 10001, "system:kubelet-bootstrap"
+// 2.Token认证实现
+// 在进行Token认证时， a.tokens中存储了服务端的Token列表， 通 过a.tokens查询客户端提供的Token，
+// 如果查询不到，则认证失败返回 false，反之则认证成功返回true。
 func (a *TokenAuthenticator) AuthenticateToken(ctx context.Context, value string) (*authenticator.Response, bool, error) {
 	user, ok := a.tokens[value]
 	if !ok {

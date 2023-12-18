@@ -358,6 +358,7 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 	}
 
 	// 1. 初始化 GenericAPIServer
+	// ymjx: KubeAPIServer 的 运 行 依 赖 于 GenericAPIServer ， 通 过 c.GenericConfig.New函数创建名为kube-apiserver的服务。
 	s, err := c.GenericConfig.New("kube-apiserver", delegationTarget)
 	if err != nil {
 		return nil, err
@@ -399,13 +400,15 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 			Install(s.Handler.GoRestfulContainer)
 	}
 
+	// ymjx: KubeAPIServer（API核心服务）通过 Instance 对象进行管理， 实例 化该对象后才能注册KubeAPIServer下的资源。
 	m := &Instance{
 		GenericAPIServer:          s,
 		ClusterAuthenticationInfo: c.ExtraConfig.ClusterAuthenticationInfo,
 	}
 
 	// install legacy rest storage
-	// 3. 安装 LegacyAPI
+	// 3. 安装 LegacyAPI 注册/api资源。(没有组名的资源 core 组）
+	// ymjx: 通过InstallLegacyAPI函数将没有组名的资源组注 册到/api前缀的路径下，其表现形式为/api/<version>/<resource>， 例如http://localhost：8080/api/v1/pods。
 	if err := m.InstallLegacyAPI(&c, c.GenericConfig.RESTOptionsGetter); err != nil {
 		return nil, err
 	}
@@ -439,7 +442,9 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 		admissionregistrationrest.RESTStorageProvider{},
 		eventsrest.RESTStorageProvider{TTL: c.ExtraConfig.EventTTL},
 	}
-	// 4. 安装 APIs
+	// 4. 安装 APIs 注册/apis资源（有组名的资源）
+	// ymjx: 通过InstallAPIs函数将拥有组名的资源组注册 到 /apis 前 缀 的 路 径 下 ， 其 表 现 形 式 为/apis/<group>/<version>/<resource>， 例如http://localhost： 8080/apis/apps/v1/deployments。
+	//       通 过 m.InstallLegacyAPI 函 数 将 拥 有 组 名 的 资 源 组 注 册 到 KubeAPIServer 的 /apis 下 。 可 以 通 过 访 问 http://localhost ： 8080/apis/apps/v1/deployments获得其下的资源与子资源信息。
 	if err := m.InstallAPIs(c.ExtraConfig.APIResourceConfigSource, c.GenericConfig.RESTOptionsGetter, restStorageProviders...); err != nil {
 		return nil, err
 	}
@@ -558,6 +563,13 @@ func (m *Instance) InstallLegacyAPI(c *completedConfig, restOptionsGetter generi
 	}
 	// 创建了多个资源的 RESTStorage
 	// dfy: 创建资源的存储结构（其中就包含着加解密配置的 Transformer），并注册到对应的路径下
+	// ymjx:
+	// 1. 通过legacyRESTStorageProvider.NewLegacyRESTStorage 函数实例化APIGroupInfo， APIGroupInfo对象用于描述资源组信息，
+	//    该对象的VersionedResourcesStorageMap字段用于存储资源与资源存储对象的映射关系，其表现形式为 map[string]map[string]rest.Storage（即<资源版本>/<资源>/<资源存储对象>） ，
+	//    例如Pod资源与资源存储对象的映射关系是v1/pods/PodStorage。使CoreGroups/v1下的资源与资源存储对象相互映射
+	//    每个资源（包括子资源）都通过类似于NewREST的函数创建资源存 储对象（即RESTStorage）。
+	//    kube-apiserver将RESTStorage封装成 HTTP Handler 函数，资源存储对象以RESTful的方式运行，一个RESTStorage对象负责一个资源的增、删、改、查操作。
+	//    当操作CustomResourceDefinitions资源数据时，通过对应的RESTStorage资源存储对象与genericregistry.Store进行交互。
 	legacyRESTStorage, apiGroupInfo, err := legacyRESTStorageProvider.NewLegacyRESTStorage(c.ExtraConfig.APIResourceConfigSource, restOptionsGetter)
 	if err != nil {
 		return fmt.Errorf("error building core storage: %v", err)
@@ -582,6 +594,12 @@ func (m *Instance) InstallLegacyAPI(c *completedConfig, restOptionsGetter generi
 		apiGroupVersion.InstallREST: 将restful.WebServic对象添加到容器中。
 		installer.Install: 返回最终restful.WebService对象
 	*/
+
+	// ymjx:
+	// 2. 通过m.GenericAPIServer.InstallLegacyAPIGroup函数将 APIGroupInfo对象中的<资源组>/<资源版本>/<资源>/<子资源>（包括 资源存储对象）注册到KubeAPIServer Handlers方法。
+	//    其过程是遍历 APIGroupInfo，将<资源组>/<资源版本>/<资源名称>映射到HTTP PATH 请求路径，通过InstallREST函数将资源存储对象作为资源的Handlers 方 法 。
+	//    最 后 使 用 go-restful 的 ws.Route 将 定 义 好 的 请 求 路 径 和 Handlers 方 法 添 加 路 由 到 go-restful 中 。 整 个 过 程 为
+	//    InstallLegacyAPIGroup→s.installAPIResources→InstallREST ， 该 过程与APIExtensionsServer注册APIGroupInfo的过程类似，故不再赘 述。
 	if err := m.GenericAPIServer.InstallLegacyAPIGroup(genericapiserver.DefaultLegacyAPIPrefix, &apiGroupInfo); err != nil {
 		return fmt.Errorf("error in registering group versions: %v", err)
 	}
@@ -607,6 +625,14 @@ func (m *Instance) InstallAPIs(apiResourceConfigSource serverstorage.APIResource
 
 	for _, restStorageBuilder := range restStorageProviders {
 		groupName := restStorageBuilder.GroupName()
+		// ymjx:
+		// 1.实例化所有已启用的资源组的APIGroupInfo，APIGroupInfo对象用于描述资源组信息，该对象的VersionedResourcesStorageMap字段用于存储资源与资源存储对象的 映射关系，
+		//   其表现形式为map[string]map[string]rest.Storage（即< 资源版本>/<资源>/<资源存储对象>），
+		//   例如Deployment资源与资源存 储 对 象 的 映 射 关 系 是 v1/deployments/deploymentStorage 。
+		//   通 过 restStorageBuilder.NewRESTStorage→v1Storage函数可实现apps资 源组下的资源与资源存储对象的映射
+		//
+		//   每个资源（包括子资源）都通过类似于NewStorage的函数创建资源存储对象（即RESTStorage）。kube-apiserver将RESTStorage封装成HTTPHandler函数，资源存储对象以RESTful的方式运行，
+		//  一个RESTStorage对象负责一个资源的增、删、改、查操作。当操作CustomResourceDefinitions资源数据时， 通过对应的RESTStorage资 源存储对象与genericregistry.Store进行交互。
 		apiGroupInfo, err := restStorageBuilder.NewRESTStorage(apiResourceConfigSource, restOptionsGetter)
 		if err != nil {
 			return fmt.Errorf("problem initializing API group %q : %v", groupName, err)
@@ -640,6 +666,13 @@ func (m *Instance) InstallAPIs(apiResourceConfigSource serverstorage.APIResource
 		apiGroupsInfo = append(apiGroupsInfo, &apiGroupInfo)
 	}
 
+	// ymjx:
+	// 2. 通过m.GenericAPIServer.InstallLegacyAPIGroup函数将 APIGroupInfo对象中的<资源组>/<资源版本>/<资源>/<子资源>（包括 资源存储对象）注册到KubeAPIServer Handlers方法。
+	//    其过程是遍历 APIGroupInfo，将<资源组>/<资源版本>/<资源名称>映射到HTTP PATH 请求路径，通过InstallREST函数将资源存储对象作为资源的Handlers 方 法 。
+	//    最后使用go-restful的ws.Route将定义好的请求路径和Handlers方法添加路由到go-restful中。
+	//    整个过程为InstallAPIGroups→s.installAPIResources→InstallREST，该过程与APIExtensionsServer注册APIGroupInfo的过程类似，故不再赘述。
+	//
+	//    KubeAPIServer负责管理众多资源组，以apps资源组为例，通过访 问http://127.0.0.1：8080/apis/apps/v1可以获得该资源/子资源的 详细信息。
 	if err := m.GenericAPIServer.InstallAPIGroups(apiGroupsInfo...); err != nil {
 		return fmt.Errorf("error in registering group versions: %v", err)
 	}

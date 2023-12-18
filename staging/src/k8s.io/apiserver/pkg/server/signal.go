@@ -43,6 +43,9 @@ func SetupSignalContext() context.Context {
 	shutdownHandler = make(chan os.Signal, 2)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	// ymjx: 在kube-apiserver组件的main函数中，首先执行SetupSignalHandler函数，
+	// 它通过signal.Notify函数监控os.Interrupt和syscall.SIGTERM信号，将监控的信号与stopchan绑定
+	// 代码路径：vendor/k8s.io/apiserver/pkg/server/signal_posix.go
 	signal.Notify(shutdownHandler, shutdownSignals...)
 	go func() {
 		<-shutdownHandler

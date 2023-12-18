@@ -75,6 +75,7 @@ func createAggregatorConfig(
 		// Add StorageVersionPrecondition handler to aggregator-apiserver.
 		// The handler will block write requests to built-in resources until the
 		// target resources' storage versions are up-to-date.
+		// ymjx: 此处有多个 Handler 处理函数，其中包含 认证 handler 函数
 		genericConfig.BuildHandlerChainFunc = genericapiserver.BuildHandlerChainWithStorageVersionPrecondition
 	}
 
@@ -134,6 +135,7 @@ AggregatorServer主要用于自定义聚合控制器，使CRD自动注册到集�
 */
 func createAggregatorServer(aggregatorConfig *aggregatorapiserver.Config, delegateAPIServer genericapiserver.DelegationTarget, apiExtensionInformers apiextensionsinformers.SharedInformerFactory) (*aggregatorapiserver.APIAggregator, error) {
 	// 1. 初始化 aggregatorServer
+	// ymjx: AggregatorServer 的 运 行 依 赖 于 GenericAPIServer ， 通 过 c.GenericConfig.New函数创建名为kube-aggregator的服务。
 	aggregatorServer, err := aggregatorConfig.Complete().NewWithDelegate(delegateAPIServer)
 	if err != nil {
 		return nil, err

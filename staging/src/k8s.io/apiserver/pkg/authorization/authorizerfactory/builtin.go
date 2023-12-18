@@ -29,10 +29,17 @@ import (
 // It is useful in tests and when using kubernetes in an open manner.
 type alwaysAllowAuthorizer struct{}
 
+// ymjx: AlwaysAllow授权
+// AlwaysAllow授权器会允许所有请求，其也是kube-apiserver的默 认选项。
+// 1.启用AlwaysAllow授权
+//   kube-apiserver通过指定--authorization-mode=AlwaysAllow参 数启用AlwaysAllow授权。
+// 2.AlwaysAllow授权实现
+//   在进行AlwaysAllow授权时， 直接授权成功， 返回DecisionAllow 决策状态。
 func (alwaysAllowAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes) (authorized authorizer.Decision, reason string, err error) {
 	return authorizer.DecisionAllow, "", nil
 }
-
+// ymjx:
+// 另外，AlwaysAllow的规则解析器会将资源类型的规则列表（ResourceRuleInfo）和非资源类型的规则列表（NonResourceRuleInfo）都设置为通配符（*）匹配所有资源版本、 资源及资源操作方法。
 func (alwaysAllowAuthorizer) RulesFor(user user.Info, namespace string) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
 	return []authorizer.ResourceRuleInfo{
 			&authorizer.DefaultResourceRuleInfo{
@@ -57,10 +64,19 @@ func NewAlwaysAllowAuthorizer() *alwaysAllowAuthorizer {
 // It is useful in unit tests to force an operation to be forbidden.
 type alwaysDenyAuthorizer struct{}
 
+// ymjx: AlwaysDeny授权
+// AlwaysDeny授权器会阻止所有请求，该授权器很少单独使用，一般会结合其他授权器一起使用。它的应用场景是先拒绝所有请求，再允许授权过的用户请求。
+// 1.启用AlwaysDeny授权
+// kube-apiserver通过指定--authorization-mode=AlwaysDeny参数 启用AlwaysDeny授权。
+// 2.AlwaysDeny授权实现
+// 在进行AlwaysDeny授权时， 直接返回DecisionNoOpionion决策状态。如果存在下一个授权器，会继续执行下一个授权器；
+// 如果不存在 下一个授权器， 则会拒绝所有请求。 这就是kube-apiserver使用 AlwaysDeny的应用场景
 func (alwaysDenyAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes) (decision authorizer.Decision, reason string, err error) {
 	return authorizer.DecisionNoOpinion, "Everything is forbidden.", nil
 }
 
+// ymjx:
+// 另外，AlwaysDeny的规则解析器会将资源类型的规则列表（ResourceRuleInfo）和非资源类型的规则列表（NonResourceRuleInfo）都设置为空
 func (alwaysDenyAuthorizer) RulesFor(user user.Info, namespace string) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
 	return []authorizer.ResourceRuleInfo{}, []authorizer.NonResourceRuleInfo{}, false, nil
 }

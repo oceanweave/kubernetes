@@ -145,6 +145,8 @@ func (cfg *Config) Complete() CompletedConfig {
  */
 func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget) (*CustomResourceDefinitions, error) {
 	// 1. 初始化 genericServer
+	// ymjx: APIExtensionsServer 的 运 行 依 赖 于 GenericAPIServer ，
+	// 通 过 c.GenericConfig.New 函 数 创 建 名 为 apiextensions-apiserver 的 服 务。
 	genericServer, err := c.GenericConfig.New("apiextensions-apiserver", delegationTarget)
 	if err != nil {
 		return nil, err
@@ -157,16 +159,35 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 		return nil, err
 	}
 
+	// ymjx:
+	// APIExtensionsServer （ API 扩 展 服 务 ） 通 过 CustomResourceDefinitions对象进行管理，
+	// 实例化该对象后才能注册 APIExtensionsServer下的资源。
 	s := &CustomResourceDefinitions{
 		GenericAPIServer: genericServer,
 	}
 
 	// 2. 初始化 APIGroup Info，APIGroup 指该 Server 需要暴露的 API
 	apiResourceConfig := c.GenericConfig.MergedResourceConfig
+	// ymjx:
+	// APIGroupInfo 对象用于描述资源组信息，其中该对象 的VersionedResourcesStorageMap字段用于存储资源与资源存储对象的 对应关系，
+	// 其表现形式为map[string]map[string]rest.Storage（即< 资 源 版 本 >/< 资 源 >/< 资 源 存 储 对 象 > ） ，
+	// 例如 CustomResourceDefinitions 资源与资源存储对象的映射关系是 v1beta1/customresourcedefinitions/customResourceDefintionStor age。
+    // 注意： 一个资源组对应一个APIGroupInfo对象，每个资源（包 括子资源）对应一个资源存储对象。
 	apiGroupInfo := genericapiserver.NewDefaultAPIGroupInfo(apiextensions.GroupName, Scheme, metav1.ParameterCodec, Codecs)
 	storage := map[string]rest.Storage{}
 	// customresourcedefinitions
+	// ymjx:
+	// 在实例化APIGroupInfo对象后， 完成其资源与资源存储对象的映射，
+	// APIExtensionsServer会先判断apiextensions.k8s.io/v1beta1资源组/资源版本是否已启用，
+	// 如果其已启用，则将该资源组、资源版本下的资源与资源存储对象进行映射并存储至APIGroupInfo对象的 VersionedResourcesStorageMap字段中。
+
+	// APIExtensionsServer负责管理apiextensions.k8s.io资源组下的 所有资源， 该资源有v1beta1版本。
+	// 通过访问http://127.0.0.1： 8080/apis/apiextensions.k8s.io/v1获得该资源/子资源的详细信 息
 	if resource := "customresourcedefinitions"; apiResourceConfig.ResourceEnabled(v1.SchemeGroupVersion.WithResource(resource)) {
+		// ymjx:
+		// 每个资源（包括子资源）都通过类似于NewREST的函数创建资源存 储对象（即RESTStorage）。
+		// kube-apiserver将RESTStorage封装成 HTTP Handler 函数， 资源存储对象以RESTful的方式运行，一个RESTStorage对象负责一个资源的增、删、改、查操作。
+		// 此处通过 NewREST 创建 customResourceDefinitionStorage；当操作 CustomResourceDefinitions资源数据时， 通过对应的 RESTStorage 资源存储对象与genericregistry.Store进行交互。
 		customResourceDefinitionStorage, err := customresourcedefinition.NewREST(Scheme, c.GenericConfig.RESTOptionsGetter)
 		if err != nil {
 			return nil, err
@@ -177,8 +198,11 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 	if len(storage) > 0 {
 		apiGroupInfo.VersionedResourcesStorageMap[v1.SchemeGroupVersion.Version] = storage
 	}
-
+∑
 	// 3. 注册 APIGroup
+	// InstallAPIGroup注册APIGroupInfo的过程非常重要， 将 APIGroupInfo对象中的<资源组>/<资源版本>/<资源>/<子资源>（包括 资源存储对象）注册到APIExtensionsServerHandler函数。
+	// 其过程是 遍历APIGroupInfo， 将<资源组>/<资源版本>/<资源名称>映射到HTTP PATH请求路径， 通过InstallREST函数将资源存储对象作为资源的 Handlers方法，
+	// 最后使用go-restful的ws.Route将定义好的请求路径 和 Handlers 方法添加路由到go-restful中。整个过程为 InstallAPIGroup→s.installAPIResources→ s.installAPIResources --> InstallREST
 	if err := s.GenericAPIServer.InstallAPIGroup(&apiGroupInfo); err != nil {
 		return nil, err
 	}

@@ -138,6 +138,14 @@ cluster's shared state through which all other components interact.`,
 			// ymjx: 4. 将 ServerRunOptions（kube-apiserver组件的运行配置）对象传入Run函数，
 			// Run函数定义了kube-apiserver组件启动的逻辑，它是一个运行不退出的常驻进程。
 			// 至此，完成了kube-apiserver组件启动之前的环境配置。
+			// ymjx: 进程信号处理机制
+			// Kubernetes基于UNIX信号（SIGNAL信号）来实现常驻进程及进程的优雅退出。
+			// 例如，当kube-apiserver组件进程收到一个SIGTERM信号或SIGINT信号时，会通知kube-apiserver内部的goroutine优先退出，最后再退出kube-apiserver进程。
+			// 信号的用处非常广泛，例如在Prometheus源码中，会监控SIGHUP信号，若该信号被触发，会热加载配置文件（即在不重启进程的情况下重新加载配置文件）
+			//
+			// 在kube-apiserver组件的main函数中，首先执行SetupSignalHandler函数，它通过signal.Notify函数监控os.Interrupt和syscall.SIGTERM信号，将监控的信号与stopchan绑定。
+			// stopchan返回值被Run函数所调用（代码见7.9.2节“进程的优雅关闭”）。在kube-apiserver组件未触发这两个信号时，stopchan处于阻塞状态（即实现了常驻进程）；
+			// 当按下了Ctrl+C组合键或发送了kill-15信号时，stopchan处于非阻塞状态（即实现了进程退出）
 			return Run(completedOptions, genericapiserver.SetupSignalHandler())
 		},
 		// dfy: 用于指定命令的参数验证规则的函数，就是用于验证接收到的参数，如，cobra.ExactArgs(2) 表示命令必须接受且仅接受两个参数
@@ -211,6 +219,7 @@ CreateServerChain是完成服务端初始化的方法，包含初始化，最后
 func CreateServerChain(completedOptions completedServerRunOptions, stopCh <-chan struct{}) (*aggregatorapiserver.APIAggregator, error) {
 	// dfy: 根据命令行获取的参数，创建 apiserver config，此处包含读取加密配置
 	// 1. 为 kubeAPIServer 创建配置
+	// ymjx：包含授权 handler 函数的配置
 	kubeAPIServerConfig, serviceResolver, pluginInitializer, err := CreateKubeAPIServerConfig(completedOptions)
 	if err != nil {
 		return nil, err
@@ -238,6 +247,11 @@ func CreateServerChain(completedOptions completedServerRunOptions, stopCh <-chan
 		- 如前所述，apiserver最终实现的handler对应的后端数据存储在一个Store结构体中。在这里，例如，以 开头的路由用于通过该方法为每个资源/api创建RESTStorage 。NewLegacyRESTStorageRESTStorage 是在 下定义的结构k8s.io/apiserver/pkg/registry/generic/registry/store.go，主要包含NewFunc返回资源特定信息、NewListFunc返回资源特定列表以及CreateStrategy资源创建、UpdateStrategy更新和DeleteStrategy删除。在里面NewLegacyRESTStorage，你可以看到创建了多个资源的 RESTStorage。
 		- NewLegacyRESTStorage的调用链是CreateKubeAPIServer --> kubeAPIServerConfig.Complete().New --> m.InstallLegacyAPI --> legacyRESTStorageProvider.NewLegacyRESTStorage。
 	*/
+	// ymjx:
+	// 创建KubeAPIServer的流程与创建APIExtensionsServer的流程类 似，
+	// 其原理都是将<资源组>/<资源版本>/<资源>与资源存储对象进行 映 射 并 将 其 存 储 至 APIGroupInfo 对 象 的 VersionedResourcesStorageMap字段中。
+	// 通过installer.Install安装器为资源注册对应的Handlers方法（即资源存储对象ResourceStorage），
+	// 完成资源与资源Handlers方法的绑定并为go-restful WebService 添 加 该 路 由 。 最 后 将 WebService 添 加 到 go-restful Container中。
 	kubeAPIServer, err := CreateKubeAPIServer(kubeAPIServerConfig, apiExtensionsServer.GenericAPIServer)
 	if err != nil {
 		return nil, err
@@ -245,11 +259,17 @@ func CreateServerChain(completedOptions completedServerRunOptions, stopCh <-chan
 
 	// aggregator comes last in the chain
 	// 5. 创建 AggregatorConfig
+	// ymjx: 此处有多个 Handler 处理函数，其中包含 认证 handler 函数
 	aggregatorConfig, err := createAggregatorConfig(*kubeAPIServerConfig.GenericConfig, completedOptions.ServerRunOptions, kubeAPIServerConfig.ExtraConfig.VersionedInformers, serviceResolver, kubeAPIServerConfig.ExtraConfig.ProxyTransport, pluginInitializer)
 	if err != nil {
 		return nil, err
 	}
 	// 6. 初始化 AggregatorServer
+	// ymjx:
+	//  创建AggregatorServer的流程与创建APIExtensionsServer 的流程类似，其原理都是将<资源组>/<资源版本>/<资源>与资源存储对象进行映射
+	//  并将其存储至APIGroupInfo对象的VersionedResourcesStorageMap字段中。
+	//  通过installer.Install安装器为资源注册对应的Handlers方法（即资源存储对象ResourceStorage），完成资源与资源Handlers方法的绑定并为go-restfulWebService添加该路由。
+	//  最后将WebService添加到go-restfulContainer中。
 	aggregatorServer, err := createAggregatorServer(aggregatorConfig, kubeAPIServer.GenericAPIServer, apiExtensionsServer.Informers)
 	if err != nil {
 		// we don't need special handling for innerStopCh because the aggregator server doesn't create any go routines
@@ -296,7 +316,9 @@ func CreateKubeAPIServerConfig(s completedServerRunOptions) (
 	// 创建 apiserver 通用 config，此处包含读取加密配置
 	// storageFactory 包含加密配置 transformer
 	// 1. 构建 genericConfig
-	// ymjx:
+	// ymjx:  创建通用配置，十分重要
+	// 包含 1.OpenAPI/Swagger配置 2.StorageFactory存储（Etcd）配置 3.Authentication认证配置 4.Authorization授权配置 5.Admission准入控制器配置
+	// ymjx：包含授权 handler 函数的配置
 	genericConfig, versionedInformers, serviceResolver, pluginInitializers, admissionPostStartHook, storageFactory, err := buildGenericConfig(s.ServerRunOptions, proxyTransport)
 	if err != nil {
 		return nil, nil, nil, err
@@ -427,6 +449,7 @@ func buildGenericConfig(
 	lastErr error,
 ) {
 	// 1. 为 genericConfig 设置默认值
+	// ymjx：包含授权 handler 函数的配置
 	genericConfig = genericapiserver.NewConfig(legacyscheme.Codecs)
 	// ymjx: a. 资源启用/禁用配置
 	// 用于设置启用/禁用GV（资 源组、资源版本）及其Resource （资源）。
@@ -567,6 +590,11 @@ func buildGenericConfig(
 	}
 	serviceResolver = buildServiceResolver(s.EnableAggregatorRouting, genericConfig.LoopbackClientConfig.Host, versionedInformers)
 	// 8. 准入插件的初始化
+
+	// ymjx: Admission 准入控制器配置
+	// Kubernetes系统组件或客户端请求通过授权阶段之后， 会来到准 入控制器阶段，它会在认证和授权请求之后，对象被持久化之前，拦 截kube-apiserver的请求，
+	// 拦截后的请求进入准入控制器中处理， 对 请求的资源对象进行自定义（校验、 修改或拒绝）等操作。
+	// kubeapiserver支持多种准入控制器机制，并支持同时开启多个准入控制器 功能，如果开启了多个准入控制器，则按照顺序执行准入控制器。
 	pluginInitializers, admissionPostStartHook, err = admissionConfig.New(proxyTransport, genericConfig.EgressSelector, serviceResolver, genericConfig.TracerProvider)
 	if err != nil {
 		lastErr = fmt.Errorf("failed to create admission plugin initializer: %v", err)
@@ -592,6 +620,7 @@ func buildGenericConfig(
 }
 
 // BuildAuthorizer constructs the authorizer
+// ymjx: 在该函数中，首先生成授权 器的配置文件， 然后调用authorizationConfig.New函数实例化授权器
 func BuildAuthorizer(s *options.ServerRunOptions, EgressSelector *egressselector.EgressSelector, versionedInformers clientgoinformers.SharedInformerFactory) (authorizer.Authorizer, authorizer.RuleResolver, error) {
 	authorizationConfig := s.Authorization.ToAuthorizationConfig(versionedInformers)
 
@@ -603,6 +632,13 @@ func BuildAuthorizer(s *options.ServerRunOptions, EgressSelector *egressselector
 		authorizationConfig.CustomDial = egressDialer
 	}
 
+	// ymjx: authorizationConfig.New函数在实例化授权器的过程中，
+	// 会根 据--authorization-mode参数的配置信息（由flags命令行参数传入）决定是否启用授权方法，并对启用的授权方法生成对应的HTTPHandler函数 ，
+	// 最后通过union函数将已启用的授权器合并到authorizers数组对象中
+	// authorizers中存放的是已启用的授权器列表， ruleResolvers中 存放的是已启用的授权器规则解析器，
+	// 实际上分别将它们存放在union 结构的[]authorizer.Authorizer和[]authorizer.RuleResolver对象 中。
+	// 当客户端请求到达kube-apiserver时， kube-apiserver会遍历授 权器列表，并按照顺序执行授权器，
+	// 排在前面的授权器具有更高的优先级（允许或拒绝请求）。 客户端发起一个请求， 在经过授权阶段时，只要有一个授权器通过，则授权成功。
 	return authorizationConfig.New()
 }
 

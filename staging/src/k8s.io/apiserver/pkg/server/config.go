@@ -330,7 +330,7 @@ func NewConfig(codecs serializer.CodecFactory) *Config {
 
 	return &Config{
 		Serializer:                  codecs,
-		BuildHandlerChainFunc:       DefaultBuildHandlerChain,
+		BuildHandlerChainFunc:       DefaultBuildHandlerChain, // ymjx：包含认证 handler 和 授权 handler 函数的配置
 		HandlerChainWaitGroup:       new(utilwaitgroup.SafeWaitGroup),
 		LegacyAPIGroupPrefixes:      sets.NewString(DefaultLegacyAPIPrefix),
 		DisabledPostStartHooks:      sets.NewString(),
@@ -587,6 +587,9 @@ func (c *RecommendedConfig) Complete() CompletedConfig {
 // New creates a new server which logically combines the handling chain with the passed server.
 // name is used to differentiate for logging. The handler chain in particular can be difficult as it starts delegating.
 // delegationTarget may not be nil.
+// ymjx:
+// 无 论 创 建 APIExtensionsServer 、 KubeAPIServer ， 还 是 AggregatorServer， 它们在底层都依赖于GenericAPIServer。
+// 通过 GenericAPIServer 将 Kubernetes 资 源 与 REST API 进 行 映 射 。
 func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*GenericAPIServer, error) {
 	if c.Serializer == nil {
 		return nil, fmt.Errorf("Genericapiserver.New() called with config.Serializer == nil")
@@ -602,6 +605,7 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 		return c.BuildHandlerChainFunc(handler, c.Config)
 	}
 
+	// ymjx: 通过restful.NewContainer创建 restful Container实例，并设置Router路由
 	apiServerHandler := NewAPIServerHandler(name, c.Serializer, handlerChainBuilder, delegationTarget.UnprotectedHandler())
 
 	s := &GenericAPIServer{
@@ -765,6 +769,7 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 
 	s.listedPathProvider = routes.ListedPathProviders{s.listedPathProvider, delegationTarget}
 
+	// ymjx: installAPI通过routes注册GenericAPIServer的相关API
 	installAPI(s, c.Config)
 
 	// use the UnprotectedHandler from the delegation target to ensure that we don't attempt to double authenticator, authorize,
@@ -782,11 +787,13 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 func BuildHandlerChainWithStorageVersionPrecondition(apiHandler http.Handler, c *Config) http.Handler {
 	// WithStorageVersionPrecondition needs the WithRequestInfo to run first
 	handler := genericapifilters.WithStorageVersionPrecondition(apiHandler, c.StorageVersionManager, c.Serializer)
+	// ymjx: 此处有多个 Handler 处理函数，其中包含 认证 handler 函数
 	return DefaultBuildHandlerChain(handler, c)
 }
 
 func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
 	handler := filterlatency.TrackCompleted(apiHandler)
+	// ymjx：授权 handler 函数的配置
 	handler = genericapifilters.WithAuthorization(handler, c.Authorization.Authorizer, c.Serializer)
 	handler = filterlatency.TrackStarted(handler, "authorization")
 
@@ -812,6 +819,7 @@ func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
 
 	failedHandler = filterlatency.TrackCompleted(failedHandler)
 	handler = filterlatency.TrackCompleted(handler)
+	// ymjx: 注册认证处理函数
 	handler = genericapifilters.WithAuthentication(handler, c.Authentication.Authenticator, failedHandler, c.Authentication.APIAudiences)
 	handler = filterlatency.TrackStarted(handler, "authentication")
 
@@ -849,9 +857,11 @@ func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
 
 func installAPI(s *GenericAPIServer, c *Config) {
 	if c.EnableIndex {
+		// ymjx: 用于获取index索引页面
 		routes.Index{}.Install(s.listedPathProvider, s.Handler.NonGoRestfulMux)
 	}
 	if c.EnableProfiling {
+		// ymjx: 用于分析性能的可视化页面
 		routes.Profiling{}.Install(s.Handler.NonGoRestfulMux)
 		if c.EnableContentionProfiling {
 			goruntime.SetBlockProfileRate(1)
@@ -861,12 +871,14 @@ func installAPI(s *GenericAPIServer, c *Config) {
 	}
 	if c.EnableMetrics {
 		if c.EnableProfiling {
+			// ymjx: 用于获取metrics指标信息， 一 般用于Prometheus指标采集
 			routes.MetricsWithReset{}.Install(s.Handler.NonGoRestfulMux)
 		} else {
 			routes.DefaultMetrics{}.Install(s.Handler.NonGoRestfulMux)
 		}
 	}
 
+	// ymjx: 用于获取Kubernetes系统版本信息
 	routes.Version{Version: c.Version}.Install(s.Handler.GoRestfulContainer)
 
 	if c.EnableDiscovery {

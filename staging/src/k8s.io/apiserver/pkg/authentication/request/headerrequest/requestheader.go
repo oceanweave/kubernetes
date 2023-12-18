@@ -154,6 +154,28 @@ func NewDynamicVerifyOptionsSecure(verifyOptionFn x509request.VerifyOptionFunc, 
 	return x509request.NewDynamicCAVerifier(verifyOptionFn, headerAuthenticator, proxyClientNames)
 }
 
+// ymjx:
+// RequestHeader认证
+// Kubernetes可以设置一个认证代理， 客户端发送的认证请求可以 通过认证代理将验证信息发送给kube-apiserver组件。
+// RequestHeader 认证使用的就是这种代理方式，它使用请求头将用户名和组信息发送 给kube-apiserver。
+// RequestHeader认证有几个列表，分别介绍如下。
+// - 用户名列表：建 议 使 用 X-Remote-User ， 如 果 启 用 RequestHeader认证，该参数必选。
+// - 组列表： 建议使用X-Remote-Group，如果启用RequestHeader 认证，该参数可选。
+// - 额外列表： 建 议 使 用 X-Remote-Extra- ， 如 果 启 用 RequestHeader认证，该参数可选。
+// 当客户端发送认证请求时，kube-apiserver根据Header Values中 的用户名列表来识别用户， 例如返回X-Remote-User：Bob则表示验证 成功。
+// 1.启用RequestHeader认证
+// kube-apiserver通过指定如下参数启用RequestHeader认证。
+// --requestheader-client-ca-file ：指定有效的客户端CA证 书。
+// --requestheader-allowed-names ：指定通用名称（Common Name）。
+// --requestheader-extra-headers-prefix ：指定额外列表。
+// --requestheader-group-headers ：指定组列表。
+// --requestheader-username-headers ：指定用户名列表。
+// kube-apiserver 收 到 客 户 端 验 证 请 求 后 ， 会 先 通 过 -requestheader-client-ca-file参数对客户端证书进行验证。
+// --requestheader-username-headers参数指定了Header中包含的 用户名，这一参数中的列表确定了有效的用户名列表，
+// 如果该列表为 空， 则所有通过--requestheader-client-ca-file参数校验的请求都 允许通过。
+// 2.RequestHeader认证实现
+// 在进行RequestHeader认证时， 通过headerValue函数从请求头中 读取所有的用户信息，通过allHeaderValues函数读取所有组的信息，
+// 通过newExtra函数读取所有额外的信息。 当用户名无法匹配时， 则认 证失败返回false，反之则认证成功返回true。
 func (a *requestHeaderAuthRequestHandler) AuthenticateRequest(req *http.Request) (*authenticator.Response, bool, error) {
 	name := headerValue(req.Header, a.nameHeaders.Value())
 	if len(name) == 0 {

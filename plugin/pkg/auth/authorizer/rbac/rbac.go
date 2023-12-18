@@ -72,6 +72,31 @@ func (v *authorizingVisitor) visit(source fmt.Stringer, rule *rbacv1.PolicyRule,
 	return true
 }
 
+// Authorize ymjx: RBAC授权
+// RBAC授权器现实了基于角色的权限访问控制（Role-BasedAccessControl），其也是目前使用最为广泛的授权模型。
+// 在RBAC授权器中，权限与角色相关联，形成了用户—角色—权限的授权模型。用户通过加入某些角色从而得到这些角色的操作权限，这极大地简化了权限管理。
+// 1.RBAC核心数据结构
+// 在kube-apiserver设计的RBAC授权器中，新增了角色与集群绑定的概念，也就是说，kube-apiserver可以提供4种数据类型来表达基于角色的授权，
+// 它们分别是角色（Role）、集群角色（ClusterRole）、角色绑定（RoleBinding）及集群角色绑定（ClusterRoleBinding），
+// 这4种数据类型定义在vendor/k8s.io/api/rbac/v1/types.go中
+// 2.RBAC授权详解
+// 在进行RBAC授权时，首先通过r.authorizationRuleResolver.VisitRulesFor函数调用给定的ruleCheckingVisitor.visit函数来验证授权，
+// 该函数返回的allowed字段为true，表示授权成功并返回DecisionAllow决策状态。
+// ruleCheckingVisitor.visit函数会调用RBAC的RuleAllows函数， RuleAllows函数是实际验证授权规则的函数， 该函数的验证授权原理
+// RuleAllows函数验证授权规则的过程如下。
+// 首先通过IsResourceRequest函数判断请求的资源是资源类型接口（例如/api/v1/nodes）还是非资源类型接口（例如/healthz）。
+// 如果是资源类型接口，则执行一系列的Matches函数：VerbMatches（匹配操作）→APIGroupMatches（匹配资源组）→ResourceMatches（匹配资源或子资源）→ResourceNameMatches（匹配资源名称），当全部Matches函数返回true时，授权成功。
+// 如果是非资源类型接口，也需要执行一些Matches函数：VerbMatches（匹配操作）→NonResourceURLMatches（匹配非资源类型的接口URL），当全部Matches函数返回true时，授权成功
+// 3.内置集群角色
+// kube-apiserver在启动时会默认创建内置角色。 例如clusteradmin集群角色， 它拥有Kubernetes的最高权限
+// cluster-admin集群角色的定义中将资源类型和非资源类型都设置 为通配符（*），匹配所有资源版本、资源，拥有Kubernetes的最高控 制权限。
+// 然后将cluster-admin集群角色与system：masters组进行绑 定。
+// 默认创建的内置角色定义与cluster-admin集群角色定义类似，内 置角色定义在plugin/pkg/auth/authorizer/rbac/bootstrappolicy目 录下
+// 注意：不建议擅自改动内置集群角色及内置权限的定义，因为这样可能会造成Kubernetes 系统中的某些组件因权限问题导致不可以被授权。
+// Component Roles说明。
+// 控制器角色，kube-controller-manager组件负责运行核心控制循环。
+// 当使用--use-service-account-credentials参数运行kube-controller-manager时，每个控制循环都使用单独的服务账户启动，每一个控制循环都对应控制器角色前缀名system：controller：。
+// 如果不使用--use-service-account-credentials参数，kube-controller-manager将会使用自己的凭证运行所有的控制循环， 而这些凭证必须被授予相关的角色(手动配置上controller-manager所有Controller的所有权限）
 func (r *RBACAuthorizer) Authorize(ctx context.Context, requestAttributes authorizer.Attributes) (authorizer.Decision, string, error) {
 	ruleCheckingVisitor := &authorizingVisitor{requestAttributes: requestAttributes}
 

@@ -163,6 +163,20 @@ func newWithBackoff(subjectAccessReview subjectAccessReviewer, authorizedTTL, un
 // TODO(mikedanese): We should eventually support failing closed when we
 // encounter an error. We are failing open now to preserve backwards compatible
 // behavior.
+// ymjx: Webhook授权
+// Webhook授权器拥有基于HTTP协议回调的机制，当用户授权时，kube-apiserver组件会查询外部的Webhook服务。
+// 该过程与WebhookTokenAuth认证相似，但其中确认用户身份的机制不一样。
+// 当客户端发送的认证请求到达kube-apiserver时，kubeapiserver回调钩子方法，将授权信息发送给远程的Webhook服务器进行认证，
+// 根据Webhook服务器返回的状态来判断是否授权成功。
+// 1.启用Webhook授权
+// kube-apiserver通过指定如下参数启用Webhook授权。
+// --authorization-mode=Webhook ：启用Webhook授权器。
+// --authorization-webhook-config-file ：使用kubeconfig格式的Webhook配置文件。
+//   文件使用kubeconfig格式。在该配置文件中，users指 的是kube-apiserver本身，clusters指的是远程Webhook服务
+// 2.Webhook授权实现
+// 在进行Webhook授权时，首先通过w.responseCache.Get函数从缓存中查找是否已有缓存的授权，如果有则直接使用该状态（Status），
+// 如果没有则通过w.subjectAccessReview.Create（RESTClient）从远程的Webhook服务器获取授权验证，该函数发送Post请求，并在请求体（Body）中携带授权信息。
+// 在验证Webhook服务器授权之后，返回的Status.Allowed字段为true，表示授权成功并返回DecisionAllow决策状态。
 func (w *WebhookAuthorizer) Authorize(ctx context.Context, attr authorizer.Attributes) (decision authorizer.Decision, reason string, err error) {
 	r := &authorizationv1.SubjectAccessReview{}
 	if user := attr.GetUser(); user != nil {
@@ -247,6 +261,9 @@ func (w *WebhookAuthorizer) Authorize(ctx context.Context, attr authorizer.Attri
 }
 
 //TODO: need to finish the method to get the rules when using webhook mode
+// ymjx:
+// 另外，Webhook的规则解析器不支持规则列表解析，因为规则是由 远程的Webhook服务端进行授权的。
+// 所以Webhook的规则解析器的资源 类型的规则列表（ResourceRuleInfo）和非资源类型的规则列表 （NonResourceRuleInfo）都会被设置为空
 func (w *WebhookAuthorizer) RulesFor(user user.Info, namespace string) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
 	var (
 		resourceRules    []authorizer.ResourceRuleInfo

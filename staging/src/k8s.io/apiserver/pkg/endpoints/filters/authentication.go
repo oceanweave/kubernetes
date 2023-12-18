@@ -38,6 +38,18 @@ type recordMetrics func(context.Context, *authenticator.Response, bool, error, a
 // stores any such user found onto the provided context for the request. If authentication fails or returns an error
 // the failed handler is used. On success, "Authorization" header is removed from the request and handler
 // is invoked to serve the request.
+// ymjx:
+// 假 设 所 有 的 认 证 器 都 被 启 用 ， 当 客 户 端 发 送 请 求 到 kubeapiserver服务，该请求会进入Authentication Handler函数（处理认 证相关的Handler函数），
+// 在Authentication Handler函数中，会遍历已启用的认证器列表， 尝试执行每个认证器， 当有一个认证器返回 true时，则认证成功，否则继续尝试下一个认证器。
+//
+// WithAuthentication函数可以作为kube-apiserver的认证Handler 函数。
+// 如果auth认证器为空， 说明kube-apiserver未启用任何认证功 能；
+// 如果其不为空， 则通过auth.AuthenticateRequest函数对请求进 行认证。
+// 如果身份认证失败， 则通过failed.ServeHTTP函数返回HTTP 401 Unauthorized， 表示认证被拒绝；
+// 如果身份认证成功， 则不再需 要Authorization请求头并进入授权阶段。
+//
+// 在auth.AuthenticateRequest函数对请求进行认证的过程中， 遍 历已启用的认证器列表并执行每个认证器
+
 func WithAuthentication(handler http.Handler, auth authenticator.Request, failed http.Handler, apiAuds authenticator.Audiences) http.Handler {
 	return withAuthentication(handler, auth, failed, apiAuds, recordAuthMetrics)
 }
@@ -53,6 +65,8 @@ func withAuthentication(handler http.Handler, auth authenticator.Request, failed
 		if len(apiAuds) > 0 {
 			req = req.WithContext(authenticator.WithAudiences(req.Context(), apiAuds))
 		}
+		// ymjx: 在auth.AuthenticateRequest函数对请求进行认证的过程中， 遍 历已启用的认证器列表并执行每个认证器
+		//		 此处重要！！！  是认证部分的关键函数接口
 		resp, ok, err := auth.AuthenticateRequest(req)
 		authenticationFinish := time.Now()
 		defer func() {

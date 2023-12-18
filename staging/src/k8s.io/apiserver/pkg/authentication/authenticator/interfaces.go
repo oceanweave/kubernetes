@@ -26,12 +26,48 @@ import (
 // Token checks a string value against a backing authentication store and
 // returns a Response or an error if the token could not be checked.
 type Token interface {
+	// AuthenticateToken 接口：
+	// Token 认证接口定义了AuthenticateToken方法，该方法接收token 字符串。
+	// 若验证失败， bool值会为false；
+	// 若验证成功， bool值会为 true， 并返回*authenticator.Response，
+	// *authenticator.Response 中携带了身份验证用户的信息， 例如Name、 UID、 Groups、 Extra等信 息。
+	//
+	// ymjx:
+	// - TokenAuthenticator(tokenfile.go): TokenAuth认证
+	//   路径 vendor/k8s.io/apiserver/pkg/authentication/token/tokenfile/tokenfile.go
+	// - TokenAuthenticator(bootstrap.go): BootstrapToken认证
+	//   路径 plugin/pkg/auth/authenticator/token/bootstrap/bootstrap.go
+	// - WebhookTokenAuthenticator: WebhookTokenAuth认证
+	//   路径 vendor/k8s.io/apiserver/plugin/pkg/authenticator/token/webhook/webhook.go
+	// - Authticator: OIDC认证
+	//   路径 vendor/k8s.io/apiserver/plugin/pkg/authenticator/token/oidc/oidc.go
+	// - jwtTokenAuthenticator: ServiceAccountAuth认证
+	//   pkg/serviceaccount/jwt.go
 	AuthenticateToken(ctx context.Context, token string) (*Response, bool, error)
 }
 
 // Request attempts to extract authentication information from a request and
 // returns a Response or an error if the request could not be checked.
 type Request interface {
+	// AuthenticateRequest 接口：
+	// 路径 vendor/k8s.io/apiserver/pkg/authentication/request
+
+	// Request 认证接口定义了AuthenticateRequest方法，该方法接收 客户端请求。
+	// 若验证失败，bool值会为false；
+	// 若验证成功，bool值会 为 true ， 并 返 回 *authenticator.Response ，
+	// *authenticator.Response中携带了身份验证用户的信息，例如Name、 UID、Groups、Extra等信息。
+	//
+	// ymjx:
+	// - unionAuthRequestHandler 遍历已启用的认证器列表， 尝试执行每个认证器， 当有一个认证器返回 true时，则认证成功，否则继续尝试下一个认证器
+	//   路径：vendor/k8s.io/apiserver/pkg/authentication/request/union/union.go
+	// - Authenticator(bearertoken): BasicAuth认证
+	//   路径：vendor/k8s.io/apiserver/pkg/authentication/request/bearertoken/bearertoken.go
+	// - Authenticator(x509): ClientCA认证
+	//   路径：vendor/k8s.io/apiserver/pkg/authentication/request/x509/x509.go
+	// - requestHeadAuthRequestHandler: RequestHeader认证
+	//   路径：vendor/k8s.io/apiserver/pkg/authentication/request/headerrequest/requestheader.go
+	// - Anonymous认证: 该认证方式，没有直接实现接口，而是用另一个函数包装，返回值为该接口
+	//   路径：vendor/k8s.io/apiserver/pkg/authentication/request/anonymous/anonymous.go
 	AuthenticateRequest(req *http.Request) (*Response, bool, error)
 }
 

@@ -551,6 +551,44 @@ func (r *claimResolver) resolve(endpoint endpoint, allClaims claims) error {
 	return nil
 }
 
+// ymjx:
+// OIDC认证
+// OIDC（OpenID Connect）是一套基于OAuth 2.0协议的轻量级认证 规范，其提供了通过API进行身份交互的框架。
+// OIDC认证除了认证请求 外， 还会标明请求的用户身份（ID Token）。
+// 其中Token被称为ID Token，此ID Token是JSON Web Token （JWT），具有由服务器签名的 相关字段。
+// OIDC认证流程介绍如下。
+// （1）Kubernetes用户想访问Kubernetes API Server，先通过认证服务（AuthServer，例如GoogleAccounts服务）认证自己，
+//     得到access_token、id_token和refresh_token。
+// （2） Kubernetes 用户把access_token、id_token和refresh_token配置到客户端应用程序（如kubectl或dashboard工具 等）中。
+// （3）Kubernetes客户端使用Token以用户的身份访问Kubernetes API Server。
+// Kubernetes API Server和Auth Server并没有直接进行交互， 而是鉴定客户端发送的Token是否为合法Token。下面详细描述 Kubernetes Authentication OIDC Token的完整过程
+// （1）用户登录到身份提供商（即Auth Server， 例如Google Accounts服务）。
+// （2） 用户的身份提供商将提供 access_token 、 id_token 和 refresh_token。
+// （3）用户使用kubectl工具，通过--token参数指定id_token，或 者将id_token写入kubeconfig文件中。
+// （4）kubectl工具将id_token设置为Authorization的请求头并发 送给Kubernetes API Server。
+// （5）Kubernetes API Server将通过检查配置文件中指定的证书 来确保JWT签名有效。
+// （6）检查并确保id_token未过期。
+// （7）检查并确保用户已获得授权。
+// （8）获得授权后，Kubernetes API Server会响应kubectl工具。
+// （9）kubectl工具向用户提供反馈。
+// 重点！！！
+// Kubernetes API Server不与Auth Server交互就能够认证Token的 合法性， 其关键在于第（5）步， 所有JWT Token都由颁发它的 Auth Service进行了数字签名，
+// 只需在Kubernetes API Server中配置信任 的Auth Server的证书，并用它来验证收到的id_token中的签名是否合 法， 这样就可以验证Token的合法性。
+// 使用这种基于PKI的验证机制， 在配置完成并进行认证的过程中，Kubernetes API Server无须与Auth Server有任何交互。
+//
+// 1.启用OIDC认证 kube-apiserver通过指定如下参数启用OIDC认证。
+// --oidc-ca-file ：签署身份提供商的CA证书的路径，默认值为主机的根CA证书的路径（即 /etc/kubernetes/ssl/kcca.pem）。
+// --oidc-client-id：颁发所有Token的Client ID。
+// --oidc-groups-claim : JWT (JSON Web Token）声明的用户组名称。
+// --oidc-groups-prefix ：组名前缀，所有组都将以此值为前缀，以避免与其他身份验证策略发生冲突。
+// --oidc-issuer-url： Auth Server服务的URL地址，例如使用 Google Accounts服务。
+// --oidc-required-claim：该参数是键值对，用于描述I Token中的必要声明。如果设置该参数，则验证声明是否以匹配值存在于ID Token中。重复指定该参数可以设置多个声明。
+// --oide-signing-algs：JOSE非对称签名算法列表，算法以逗号分隔。如果以alg开头的JWT请求不在此列表中，请求会被拒绝（默认值为[RS256])。
+// --oide-username-claim：JWT （JSON Web Token）声明的用户名称（默认值为sub）。
+// --oidc-username-prefix：用户名前缀，所有用户名都将以此值为前缀，以避免与其他身份验证策略发生冲突。如果要跳过任何前缀，请设置该参数值为一。
+// 2. OIDC认证实现
+// 在进行OIDC认证时， 通过verifier.Verify函数验证接收到的 id_token中的签名是否合法，
+// 如果不合法则认证失败返回false，如果 合法则认证成功返回true。
 func (a *Authenticator) AuthenticateToken(ctx context.Context, token string) (*authenticator.Response, bool, error) {
 	if !hasCorrectIssuer(a.issuerURL, token) {
 		return nil, false, nil

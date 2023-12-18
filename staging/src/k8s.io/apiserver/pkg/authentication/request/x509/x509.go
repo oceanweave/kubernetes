@@ -130,6 +130,18 @@ func NewDynamic(verifyOptionsFn VerifyOptionFunc, user UserConversion) *Authenti
 }
 
 // AuthenticateRequest authenticates the request using presented client certificates
+// ymjx: ClientCA认证
+// ClientCA认证，也被称为TLS双向认证，即服务端与客户端互相验 证证书的正确性。 使用ClientCA认证的时候， 只要是CA签名过的证书 都可以通过验证。
+// 1. 启用ClientCA认证
+// kube-apiserver通过指定--client-ca-file参数启用ClientCA认 证。
+// 2. 介绍
+// ClientCA认证接口定义了AuthenticateRequest方法，该方法接收 客户端请求。
+// 若验证失败，bool值会为false；
+// 若验证成功，bool值会 为 true ， 并 返 回 *authenticator.Response ，
+// *authenticator.Response中携带了身份验证用户的信息，例如Name、 UID、Groups、Extra等信息。
+// 3. ClientCA认证实现
+// 在 进 行 ClientCA 认 证 时 ， 通 过 req.TLS.PeerCertificates[0].Verify验证证书，
+// 如果是CA签名过的 证书， 都可以通过验证， 认证失败会返回false， 而认证成功会返回 true。
 func (a *Authenticator) AuthenticateRequest(req *http.Request) (*authenticator.Response, bool, error) {
 	if req.TLS == nil || len(req.TLS.PeerCertificates) == 0 {
 		return nil, false, nil
@@ -141,6 +153,7 @@ func (a *Authenticator) AuthenticateRequest(req *http.Request) (*authenticator.R
 	if !ok {
 		return nil, false, nil
 	}
+	// ymjx: 此处验证证书
 	if optsCopy.Intermediates == nil && len(req.TLS.PeerCertificates) > 1 {
 		optsCopy.Intermediates = x509.NewCertPool()
 		for _, intermediate := range req.TLS.PeerCertificates[1:] {

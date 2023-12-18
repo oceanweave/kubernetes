@@ -29,6 +29,13 @@ const (
 	unauthenticatedGroup = user.AllUnauthenticated
 )
 
+// ymjx: (此处函数的返回值，就是定义的 Request 接口，不像别的认证结构清晰）
+// Anonymous认证
+// Anonymous认证就是匿名认证，未被其他认证器拒绝的请求都可视 为匿名请求。kube-apiserver默认开启Anonymous（匿名）认证。
+// 1.启用Anonymous认证
+// kube-apiserver通过指定--anonymous-auth参数启用Anonymous认 证，默认该参数值为true。
+// 2.Anonymous认证实现
+// 在进行Anonymous认证时，直接验证成功，返回true。
 func NewAuthenticator() authenticator.Request {
 	return authenticator.RequestFunc(func(req *http.Request) (*authenticator.Response, bool, error) {
 		auds, _ := authenticator.AudiencesFrom(req.Context())

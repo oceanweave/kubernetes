@@ -259,6 +259,37 @@ type Validator interface {
 	NewPrivateClaims() interface{}
 }
 
+// AuthenticateToken ymjx: ServiceAccountAuth认证
+// ServiceAccountAuth（Service Account Token）也被称为服务账户令牌。在详解ServiceAccountAuth认证之前，先了解一下Kubernetes的两类用户
+// -Normal Users ：普通用户， 一般由外部独立服务管理， 前面介绍的认证机制（如BasicAuth、OIDC认证等）都属于普通用户，Kubernetes没有为这类用户设置用户对象。
+// -Service Account：服务账户，是由Kubernetes API Server 管理的用户，它们被绑定到指定的命名空间，由Kubernetes API Server自动或手动创建。
+//
+//	Service Account是为了Pod资源中的进程方便与Kubernetes API Server进行通信而设置的。
+//
+// ServiceAccountAuth是一种特殊的认证机制， 其他认证机制都是处于Kubernetes集群外部而希望访问 kube-apiserver 组件 ，
+// 而 ServiceAccountAuth认证是从Pod资源内部访问kube-apiserver组件， 提供给运行在Pod资源中的进程使用，
+// 它为Pod资源中的进程提供必要 的身份证明， 从而获取集群的信息。 ServiceAccountAuth认证通过 Kubernetes资源的Service Account实现。
+//
+// Service Account包含3个主要内容，分别介绍如下。
+// - Namespace：指定了Pod所在的命名空间。
+// - CA： kube-apiserver组件的CA公钥证书，是Pod中的进程对 kube-apiserver进行验证的证书。
+// - Token：用作身份验证，通过kube-apiserver 私钥签发 (Sign）经过Base64编码的Bearer Tokeno
+// 它们都通过mount 命令的方式挂载在Pod的文件系统中。一般情况,
+// Namespace 存储的路径为/var/run/secrets/kubernetes.io/serviceaccount/namespace，通过Base64编码过 ；
+// CA存储的路径为 /var/run/secrets/kubernetes.io/serviceaccount/ca.crt；
+// Token存储的路径为/var/run/secrets/kubernetes.io/serviceaccount/token。
+//
+// 1.启用ServiceAccountAuth认证
+// kube-apiserver 通 过 指 定 如 下 参 数 启 用 ServiceAccountAuth 认 证。
+// --service-account-key-file：包含签名承载Token的PEM编 码密钥的文件，用于验证Service Account Token。
+// 如果未指 定该参数，则使用kube-apiserver的TLS私钥。
+// --service-account-lookup： 用 于 验 证 Service Account Token是否存在于Etcd中（默认值为true）。
+// 2.ServiceAccountAuth认证实现
+// 在进行ServiceAccountAuth认证时，通过jwt.ParseSigned函数解析出JWT对象，
+// 然后通过 j.validator.Validate 函数验证签名及Token，验证命名空间是否正确，验证ServiceAccountName、ServiceAccountUID是否存在，验证Token是否失效等。
+// 如果验证不合 法， 则认证失败并返回false；如果验证合法， 则认证成功并返回 true。
+// 最后， 如果Token能够通过认证， 那么请求的用户名将被设置为 system：serviceaccount：（NAMESPACE）：（SERVICEACCOUNT），
+// 而请求的组名有两个，即system：serviceaccounts和system：serviceaccounts：（NAMESPACE）。
 func (j *jwtTokenAuthenticator) AuthenticateToken(ctx context.Context, tokenData string) (*authenticator.Response, bool, error) {
 	if !j.hasCorrectIssuer(tokenData) {
 		return nil, false, nil

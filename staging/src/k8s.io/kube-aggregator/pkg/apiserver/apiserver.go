@@ -230,7 +230,22 @@ func (c completedConfig) NewWithDelegate(delegationTarget genericapiserver.Deleg
 	}
 
 	// 2. 为 API 注册路由
+	//  ymjx:
+	//  APIGroupInfo对象用于描述资源组信息，该对象的VersionedResourcesStorageMap字段用于存储资源与资源存储对象的映射关系，
+	//  其表现形式为map[string]map[string]rest.Storage（即<资源版本>/<资源>/<资源存储对象>），
+	//  例如apiservices资源与资源存储对象的映射关系是v1/apiservices/apiServiceREST。
+	//
+	//  AggregatorServer通过apiservicerest.NewRESTStorage函数实例 化APIGroupInfo对象并在内部实现其资源与资源存储对象的映射
 	apiGroupInfo := apiservicerest.NewRESTStorage(c.GenericConfig.MergedResourceConfig, c.GenericConfig.RESTOptionsGetter, resourceExpirationEvaluator.ShouldServeForVersion(1, 22))
+
+	// ymjx:
+	// 通过s.GenericAPIServer.InstallAPIGroup函数将APIGroupInfo 对象中的<资源组>/<资源版本>/<资源>/<子资源>（包括资源存储对象）注册到AggregatorServerHandlers函数。
+	// 其过程是遍历APIGroupInfo，将<资源组>/<资源版本>/<资源名称>映射到HTTP PATH 请求路径，通过InstallREST函数将资源存储对象作为资源的Handlers 方 法 ，
+	// 最 后 使 用 go-restful 的 ws.Route 将 定 义 好 的 请 求 路 径 和 Handlers 方 法 添 加 路 由 到 go-restful 中 。
+	//
+	// 整 个 过 程 为 InstallAPIGroups→s.installAPIResources→InstallREST ， 该 过 程 与AP IExtensionsServer注册APIGroupInfo的过程类似，故不再赘述。
+	//
+	// AggregatorServer负责管理apiregistration.k8s.io资源组下的所有资源，这些资源有v1beta1和v1版本，通过访问http://127.0.0.1：8080/apis/apiregistration.k8s.io/v1可以获得资源/子资源的详细信息。
 	if err := s.GenericAPIServer.InstallAPIGroup(&apiGroupInfo); err != nil {
 		return nil, err
 	}

@@ -106,7 +106,11 @@ type APIGroupVersion struct {
 // It is expected that the provided path root prefix will serve all operations. Root MUST NOT end
 // in a slash.
 func (g *APIGroupVersion) InstallREST(container *restful.Container) ([]*storageversion.ResourceInfo, error) {
+	// ymjx:
+	// 1. prefix 定 义 了 HTTP PATH 请 求 路 径 ， 其 表 现 形 式 为 <apiPrefix>/<group>/<version>（即/apis/apiextensions.k8s.io/v 1beta1）
 	prefix := path.Join(g.Root, g.GroupVersion.Group, g.GroupVersion.Version)
+	// ymjx:
+	// 2. 实例化APIInstaller安装器
 	installer := &APIInstaller{
 		group:             g,
 		prefix:            prefix,
@@ -114,9 +118,14 @@ func (g *APIGroupVersion) InstallREST(container *restful.Container) ([]*storagev
 	}
 
 	// installer.Install: 返回最终restful.WebService对象
+	// ymjx:
+	// 3. 在 installer.Install 安 装 器 内 部 创 建 一 个 go-restful WebService， 然后通过a.registerResourceHandlers函数，
+	// 为资源注 册对应的Handlers方法（即资源存储对象Resource Storage）， 完成 资源与资源Handlers方法的绑定并为go-restful WebService添加该路 由。
 	apiResources, resourceInfos, ws, registrationErrors := installer.Install()
 	versionDiscoveryHandler := discovery.NewAPIVersionHandler(g.Serializer, g.GroupVersion, staticLister{apiResources})
 	versionDiscoveryHandler.AddToWebService(ws)
+	// ymjx:
+	// 4. 最 后 通 过 container.Add 函 数 将 WebService 添 加 到 gorestful Container中
 	container.Add(ws)
 	return removeNonPersistedResources(resourceInfos), utilerrors.NewAggregate(registrationErrors)
 }
