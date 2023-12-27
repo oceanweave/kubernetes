@@ -68,9 +68,9 @@ import (
 	netutils "k8s.io/utils/net"
 
 	"k8s.io/kubernetes/cmd/kube-apiserver/app/options"
-	"k8s.io/kubernetes/pkg/api/legacyscheme"
+	"k8s.io/kubernetes/pkg/api/legacyscheme" // ymjx: 初始化 k8s 核心资源注册表 legacyscheme.Scheme
 	"k8s.io/kubernetes/pkg/capabilities"
-	"k8s.io/kubernetes/pkg/controlplane"
+	"k8s.io/kubernetes/pkg/controlplane" // ymjx: 注册 k8s 核心资源到 legacyscheme.Scheme 中
 	"k8s.io/kubernetes/pkg/controlplane/reconcilers"
 	generatedopenapi "k8s.io/kubernetes/pkg/generated/openapi"
 	"k8s.io/kubernetes/pkg/kubeapiserver"
@@ -89,6 +89,7 @@ func init() {
 func NewAPIServerCommand() *cobra.Command {
 	// dfy: apiserver 结构初始化
 	// ymjx: 1. 初始化各个模块的默认配置， 例如初始化Etcd、 Audit、 Admission等模块的默认配置。
+	// ymjx: 包含所有准入控制插件的注册
 	s := options.NewServerRunOptions()
 	cmd := &cobra.Command{
 		Use: "kube-apiserver",

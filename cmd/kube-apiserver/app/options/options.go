@@ -98,7 +98,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		SecureServing:           kubeoptions.NewSecureServingOptions(),
 		Audit:                   genericoptions.NewAuditOptions(),
 		Features:                genericoptions.NewFeatureOptions(),
-		Admission:               kubeoptions.NewAdmissionOptions(),
+		Admission:               kubeoptions.NewAdmissionOptions(), // ymjx: 包含所有准入控制插件的注册
 		Authentication:          kubeoptions.NewBuiltInAuthenticationOptions().WithAll(),
 		Authorization:           kubeoptions.NewBuiltInAuthorizationOptions(),
 		CloudProvider:           kubeoptions.NewCloudProviderOptions(),

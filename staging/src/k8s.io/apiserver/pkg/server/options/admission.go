@@ -87,6 +87,7 @@ func NewAdmissionOptions() *AdmissionOptions {
 		RecommendedPluginOrder: []string{lifecycle.PluginName, mutatingwebhook.PluginName, validatingwebhook.PluginName},
 		DefaultOffPlugins:      sets.NewString(),
 	}
+	// ymjx: 一部分准入控制插件的注册
 	server.RegisterAllAdmissionPlugins(options.Plugins)
 	return options
 }

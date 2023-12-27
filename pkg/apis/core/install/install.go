@@ -32,7 +32,8 @@ func init() {
 
 // Install registers the API group and adds types to a scheme
 func Install(scheme *runtime.Scheme) {
-	utilruntime.Must(core.AddToScheme(scheme))
-	utilruntime.Must(v1.AddToScheme(scheme))
-	utilruntime.Must(scheme.SetVersionPriority(v1.SchemeGroupVersion))
+	// ymjx: 如果有多 个资源版本，排在最前面的为资源首选版本
+	utilruntime.Must(core.AddToScheme(scheme))                         // ymjx: core.AddToScheme函数注册了core资源组内部版本的资源
+	utilruntime.Must(v1.AddToScheme(scheme))                           // ymjx: v1.AddToScheme函数注册了core资源组外部版本的资源
+	utilruntime.Must(scheme.SetVersionPriority(v1.SchemeGroupVersion)) // ymjx: scheme.SetVersionPriority函数注册了资源组的版本顺序
 }

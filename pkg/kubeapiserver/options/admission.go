@@ -43,15 +43,20 @@ type AdmissionOptions struct {
 
 // NewAdmissionOptions creates a new instance of AdmissionOptions
 // Note:
-//  In addition it calls RegisterAllAdmissionPlugins to register
-//  all kube-apiserver admission plugins.
 //
-//  Provides the list of RecommendedPluginOrder that holds sane values
-//  that can be used by servers that don't care about admission chain.
-//  Servers that do care can overwrite/append that field after creation.
+//	In addition it calls RegisterAllAdmissionPlugins to register
+//	all kube-apiserver admission plugins.
+//
+//	Provides the list of RecommendedPluginOrder that holds sane values
+//	that can be used by servers that don't care about admission chain.
+//	Servers that do care can overwrite/append that field after creation.
+//
+// ymjx: 所有准入控制插件的注册
 func NewAdmissionOptions() *AdmissionOptions {
+	// ymjx: 一部分准入控制插件的注册
 	options := genericoptions.NewAdmissionOptions()
 	// register all admission plugins
+	// ymjx: 另一部分准入控制插件的注册
 	RegisterAllAdmissionPlugins(options.Plugins)
 	// set RecommendedPluginOrder
 	options.RecommendedPluginOrder = AllOrderedPlugins
