@@ -133,9 +133,9 @@ const (
 // labelReconcileInfo lists Node labels to reconcile, and how to reconcile them.
 // primaryKey and secondaryKey are keys of labels to reconcile.
 //   - If both keys exist, but their values don't match. Use the value from the
-//   primaryKey as the source of truth to reconcile.
+//     primaryKey as the source of truth to reconcile.
 //   - If ensureSecondaryExists is true, and the secondaryKey does not
-//   exist, secondaryKey will be added with the value of the primaryKey.
+//     exist, secondaryKey will be added with the value of the primaryKey.
 var labelReconcileInfo = []struct {
 	primaryKey            string
 	secondaryKey          string
@@ -1076,6 +1076,7 @@ func (nc *Controller) tryUpdateNodeHealth(ctx context.Context, node *v1.Node) (t
 			// v1.NodeNetworkUnavailable,
 		}
 
+		// dfy: 离线 gracePeriod 时间后，添加上面的 Condition，值设置为 Unknown
 		nowTimestamp := nc.now()
 		for _, nodeConditionType := range nodeConditionTypes {
 			_, currentCondition := controllerutil.GetNodeCondition(&node.Status, nodeConditionType)
@@ -1331,9 +1332,9 @@ func (nc *Controller) setLimiterInZone(zone string, zoneSize int, state ZoneStat
 }
 
 // classifyNodes classifies the allNodes to three categories:
-//   1. added: the nodes that in 'allNodes', but not in 'knownNodeSet'
-//   2. deleted: the nodes that in 'knownNodeSet', but not in 'allNodes'
-//   3. newZoneRepresentatives: the nodes that in both 'knownNodeSet' and 'allNodes', but no zone states
+//  1. added: the nodes that in 'allNodes', but not in 'knownNodeSet'
+//  2. deleted: the nodes that in 'knownNodeSet', but not in 'allNodes'
+//  3. newZoneRepresentatives: the nodes that in both 'knownNodeSet' and 'allNodes', but no zone states
 func (nc *Controller) classifyNodes(allNodes []*v1.Node) (added, deleted, newZoneRepresentatives []*v1.Node) {
 	for i := range allNodes {
 		if _, has := nc.knownNodeSet[allNodes[i].Name]; !has {
@@ -1420,10 +1421,10 @@ func (nc *Controller) cancelPodEviction(node *v1.Node) bool {
 }
 
 // evictPods:
-// - adds node to evictor queue if the node is not marked as evicted.
-//   Returns false if the node name was already enqueued.
-// - deletes pods immediately if node is already marked as evicted.
-//   Returns false, because the node wasn't added to the queue.
+//   - adds node to evictor queue if the node is not marked as evicted.
+//     Returns false if the node name was already enqueued.
+//   - deletes pods immediately if node is already marked as evicted.
+//     Returns false, because the node wasn't added to the queue.
 func (nc *Controller) evictPods(ctx context.Context, node *v1.Node, pods []*v1.Pod) (bool, error) {
 	nc.evictorLock.Lock()
 	defer nc.evictorLock.Unlock()
