@@ -24,8 +24,10 @@ import (
 
 var (
 	// SchemeBuilder stores functions to add things to a scheme.
+	// dfy: 可以将 SchemeBuilder 当做一个数组，同时此数组存储的是类型是函数，目前存储的是 addKnownTypes 函数（该函数就是注册该 GVK 对应的资源 go struct）
 	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
 	// AddToScheme applies all stored functions t oa scheme.
+	// dfy: 供外部调用，调用方式为 AddToScheme(scheme)，用户调用传入参数 scheme 到 AddToScheme 中，便可将该 GVK 对应的资源 go struct 注册到 scheme 中
 	AddToScheme = SchemeBuilder.AddToScheme
 )
 
@@ -33,6 +35,7 @@ var (
 const GroupName = "apps"
 
 // SchemeGroupVersion is group version used to register these objects
+// dfy: runtime.APIVersionInternal 表示内部版本
 var SchemeGroupVersion = schema.GroupVersion{Group: GroupName, Version: runtime.APIVersionInternal}
 
 // Kind takes an unqualified kind and returns a Group qualified GroupKind

@@ -25,10 +25,15 @@ import (
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
+// dfy:
+// 各资源结构体的内部版本定义，没有 json tags 和 proto tags，因为不需要对外暴露
+// 上面 v1，v1beta1 等版本文件夹中，各资源的结构体定义，具有json tags 和 proto tags，因为需要对外暴露
+
 // StatefulSet represents a set of pods with consistent identities.
 // Identities are defined as:
-//  - Network: A single stable DNS and hostname.
-//  - Storage: As many VolumeClaims as requested.
+//   - Network: A single stable DNS and hostname.
+//   - Storage: As many VolumeClaims as requested.
+//
 // The StatefulSet guarantees that a given network identity will always
 // map to the same storage identity.
 type StatefulSet struct {

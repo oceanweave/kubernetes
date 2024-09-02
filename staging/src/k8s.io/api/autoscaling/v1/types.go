@@ -112,6 +112,7 @@ type HorizontalPodAutoscalerList struct {
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // Scale represents a scaling request for a resource.
+// Scale subresource
 type Scale struct {
 	metav1.TypeMeta `json:",inline"`
 	// Standard object metadata; More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata.
@@ -128,6 +129,7 @@ type Scale struct {
 }
 
 // ScaleSpec describes the attributes of a scale subresource.
+// Scale subresource 只有一个属性，Replicas
 type ScaleSpec struct {
 	// desired number of instances for the scaled object.
 	// +optional

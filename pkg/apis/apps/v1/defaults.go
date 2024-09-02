@@ -98,6 +98,10 @@ func SetDefaults_DaemonSet(obj *appsv1.DaemonSet) {
 	}
 }
 
+// dfy:
+// 该文件夹内没有 type.go 文件，那么该资源的结构体定义在哪？
+// 根据此处跳转
+// 其实该结构体定义在 staging 中，同时是对外版本，因此具有 json tags 和 proto tags
 func SetDefaults_StatefulSet(obj *appsv1.StatefulSet) {
 	if len(obj.Spec.PodManagementPolicy) == 0 {
 		obj.Spec.PodManagementPolicy = appsv1.OrderedReadyPodManagement

@@ -39,10 +39,13 @@ const (
 
 // StatefulSet represents a set of pods with consistent identities.
 // Identities are defined as:
-//  - Network: A single stable DNS and hostname.
-//  - Storage: As many VolumeClaims as requested.
+//   - Network: A single stable DNS and hostname.
+//   - Storage: As many VolumeClaims as requested.
+//
 // The StatefulSet guarantees that a given network identity will always
 // map to the same storage identity.
+// dfy: 结构体定义在此处，具有 json tags 和 proto tags，是对外暴露的版本；其实该文件是 staging 中文件的软链接
+// 可以根据此路径在 staging 目录中找到对应文件
 type StatefulSet struct {
 	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
@@ -319,6 +322,7 @@ type StatefulSetList struct {
 	Items []StatefulSet `json:"items" protobuf:"bytes,2,rep,name=items"`
 }
 
+// 注释生成 subresource 相关函数
 // +genclient
 // +genclient:method=GetScale,verb=get,subresource=scale,result=k8s.io/api/autoscaling/v1.Scale
 // +genclient:method=UpdateScale,verb=update,subresource=scale,input=k8s.io/api/autoscaling/v1.Scale,result=k8s.io/api/autoscaling/v1.Scale

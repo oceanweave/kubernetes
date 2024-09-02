@@ -43,7 +43,9 @@ func RegisterDefaults(scheme *runtime.Scheme) error {
 }
 
 func SetObjectDefaults_DaemonSet(in *v1.DaemonSet) {
+	// dfy: 用户自定义的默认值填充函数
 	SetDefaults_DaemonSet(in)
+	// dfy: 其他组，用户自定以的默认值填充函数
 	corev1.SetDefaults_PodSpec(&in.Spec.Template.Spec)
 	for i := range in.Spec.Template.Spec.Volumes {
 		a := &in.Spec.Template.Spec.Volumes[i]

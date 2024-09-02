@@ -262,6 +262,8 @@ func (c *deployments) ApplyStatus(ctx context.Context, deployment *appsv1.Deploy
 }
 
 // GetScale takes name of the deployment, and returns the corresponding autoscalingv1.Scale object, and an error if there is any.
+// 注释 // +genclient:method=GetScale,verb=get,subresource=scale,result=k8s.io/api/autoscaling/v1.Scale  生成的代码
+// 该注释作用是生成一个名为 GetScale 的客户端方法，用于获取与当前资源相关的子资源 scale 的信息，并返回一个 k8s.io/api/autoscaling/v1.Scale 类型的对象。
 func (c *deployments) GetScale(ctx context.Context, deploymentName string, options metav1.GetOptions) (result *autoscalingv1.Scale, err error) {
 	result = &autoscalingv1.Scale{}
 	err = c.client.Get().
@@ -276,6 +278,8 @@ func (c *deployments) GetScale(ctx context.Context, deploymentName string, optio
 }
 
 // UpdateScale takes the top resource name and the representation of a scale and updates it. Returns the server's representation of the scale, and an error, if there is any.
+// 注释生成代码 +genclient:method=UpdateScale,verb=update,subresource=scale,input=k8s.io/api/autoscaling/v1.Scale,result=k8s.io/api/autoscaling/v1.Scale
+//  同理，生成一个名为 UpdateScale 的方法，用于 update 更新 deployment 的 scale，函数的入参是 Scale 类型，返回结果也是 Scale 类型
 func (c *deployments) UpdateScale(ctx context.Context, deploymentName string, scale *autoscalingv1.Scale, opts metav1.UpdateOptions) (result *autoscalingv1.Scale, err error) {
 	result = &autoscalingv1.Scale{}
 	err = c.client.Put().

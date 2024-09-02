@@ -36,8 +36,11 @@ func Resource(resource string) schema.GroupResource {
 var (
 	// TODO: move SchemeBuilder with zz_generated.deepcopy.go to k8s.io/api.
 	// localSchemeBuilder and AddToScheme will stay in k8s.io/kubernetes.
+	// dfy: 可以看到，此处就是数组，保存 Scheme 注册函数
 	SchemeBuilder      = runtime.NewSchemeBuilder(addKnownTypes)
+	// dfy: 小写字母开头，无法被外部调用，因此是供该 package 内部使用
 	localSchemeBuilder = &SchemeBuilder
+	// dfy: 此处可供外部调用，进行 Scheme 注册
 	AddToScheme        = localSchemeBuilder.AddToScheme
 )
 
