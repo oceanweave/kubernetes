@@ -44,6 +44,7 @@ type Protocol uint16
 
 // New returns a new Interface which will call ipvs APIs.
 func New() Interface {
+	// dfy: 调用此 New 函数设置 ipvsHandle 接口变量，该接口的实现使用了 moby-ipvs 库，该库使用 netlink 套接字与 ipvs 内核模块通信以完成规则设置
 	handle, err := libipvs.New("")
 	if err != nil {
 		klog.Errorf("IPVS interface can't be initialized, error: %v", err)
@@ -62,6 +63,7 @@ func (runner *runner) AddVirtualServer(vs *VirtualServer) error {
 	}
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
+	// dfy: 调用 NewService 函数完成新的 ipvs VirtualServer 配置的创建，该函数最终调用了 NetLink 套接字
 	return runner.ipvsHandle.NewService(svc)
 }
 

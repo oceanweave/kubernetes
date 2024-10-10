@@ -314,6 +314,7 @@ func (o *Options) Run() error {
 		return o.writeConfigFile()
 	}
 
+	// dfy:
 	proxyServer, err := NewProxyServer(o)
 	if err != nil {
 		return err
@@ -469,7 +470,9 @@ func (o *Options) ApplyDefaults(in *kubeproxyconfig.KubeProxyConfiguration) (*ku
 }
 
 // NewProxyCommand creates a *cobra.Command object with default parameters
+// dfy: kube-proxy 初始化
 func NewProxyCommand() *cobra.Command {
+	// dfy: 返回空的启动参数结构体
 	opts := NewOptions()
 
 	cmd := &cobra.Command{
@@ -489,14 +492,17 @@ with the apiserver API to configure the proxy.`,
 				return fmt.Errorf("failed os init: %w", err)
 			}
 
+			// dfy: 补全必要的参数
 			if err := opts.Complete(); err != nil {
 				return fmt.Errorf("failed complete: %w", err)
 			}
 
+			// dfy: 校验参数的合法性
 			if err := opts.Validate(); err != nil {
 				return fmt.Errorf("failed validate: %w", err)
 			}
 
+			// dfy: 运行
 			if err := opts.Run(); err != nil {
 				klog.ErrorS(err, "Error running ProxyServer")
 				return err

@@ -254,6 +254,7 @@ func (runner *runner) EnsureChain(table Table, chain Chain) (bool, error) {
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
 
+	// dfy: 实际就是封装了 iptables 的命令，该函数与调用 iptablesCommand 函数，跳转
 	out, err := runner.run(opCreateChain, fullArgs)
 	if err != nil {
 		if ee, ok := err.(utilexec.ExitError); ok {
@@ -456,11 +457,13 @@ func iptablesCommand(protocol Protocol) string {
 	return cmdIPTables
 }
 
+// dfy: 实际就是封装了 iptables 的命令，该函数与调用 iptablesCommand 函数，跳转
 func (runner *runner) run(op operation, args []string) ([]byte, error) {
 	return runner.runContext(context.TODO(), op, args)
 }
 
 func (runner *runner) runContext(ctx context.Context, op operation, args []string) ([]byte, error) {
+	// dfy: 调用 iptables 命令
 	iptablesCmd := iptablesCommand(runner.protocol)
 	fullArgs := append(runner.waitFlag, string(op))
 	fullArgs = append(fullArgs, args...)

@@ -26,6 +26,7 @@ import (
 )
 
 // Interface is an injectable interface for running ipvs commands.  Implementations must be goroutine-safe.
+// dfy: 该接口中的函数使用 netlink 套接字来和 ipvs 内核模块进行通信
 type Interface interface {
 	// Flush clears all virtual servers in system. return occurred error immediately.
 	Flush() error

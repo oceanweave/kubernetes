@@ -92,7 +92,10 @@ func newProxyServer(
 		return nil, fmt.Errorf("unable to register configz: %s", err)
 	}
 
+	// dfy: 这些接口的实现基于对命令或对 netlink socket 的调用
+	// dfy: 该接口用于执行 iptables 相关的命令，包括创建和删除 iptables 链、iptables 规则等函数
 	var iptInterface utiliptables.Interface
+	// dfy: 用于执行 ipvs 先关的命令，主要包括创建、更新和删除 ipvs VirtualServer  等函数
 	var ipvsInterface utilipvs.Interface
 	var kernelHandler ipvs.KernelHandler
 	var ipsetInterface utilipset.Interface
