@@ -199,11 +199,13 @@ func (e *eventBroadcasterImpl) Shutdown() {
 	e.Broadcaster.Shutdown()
 }
 
+// dfy: event 持久化分析
 func recordToSink(sink EventSink, event *v1.Event, eventCorrelator *EventCorrelator, sleepDuration time.Duration) {
 	// Make a copy before modification, because there could be multiple listeners.
 	// Events are safe to copy like this.
 	eventCopy := *event
 	event = &eventCopy
+	// dfy: event 聚合入口
 	result, err := eventCorrelator.EventCorrelate(event)
 	if err != nil {
 		utilruntime.HandleError(err)
@@ -213,6 +215,7 @@ func recordToSink(sink EventSink, event *v1.Event, eventCorrelator *EventCorrela
 	}
 	tries := 0
 	for {
+		// dfy: 把事件发送到 apiserver
 		if recordEvent(sink, result.Event, result.Patch, result.Event.Count > 1, eventCorrelator) {
 			break
 		}
@@ -238,17 +241,23 @@ func recordToSink(sink EventSink, event *v1.Event, eventCorrelator *EventCorrela
 func recordEvent(sink EventSink, event *v1.Event, patch []byte, updateExistingEvent bool, eventCorrelator *EventCorrelator) bool {
 	var newEvent *v1.Event
 	var err error
+	// dfy: 如果是就 event ，就进行 patch，更新 count 等信息
 	if updateExistingEvent {
+		// dfy: 将 path 和 原来 event 结合，形成新的 聚合 event
 		newEvent, err = sink.Patch(event, patch)
 	}
+	// dfy: 如果是新 event ，就直接创建
 	// Update can fail because the event may have been removed and it no longer exists.
 	if !updateExistingEvent || (updateExistingEvent && util.IsKeyNotFoundError(err)) {
 		// Making sure that ResourceVersion is empty on creation
 		event.ResourceVersion = ""
 		newEvent, err = sink.Create(event)
 	}
+	// 已存入到 apiserver 后，更新 LRU-Cache-2 （logger）的状态
 	if err == nil {
 		// we need to update our event correlator with the server returned state to handle name/resourceversion
+		// dfy: 更新 LRU-Cache-2 的 event 信息，因为聚合 event 第一次产生，未创建之前不具有 ResourceVersion
+		//      因此 Create 创建，需要更新 event.ResourceVersion
 		eventCorrelator.UpdateState(newEvent)
 		return true
 	}

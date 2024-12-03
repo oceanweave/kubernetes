@@ -235,21 +235,26 @@ type aggregateRecord struct {
 // EventAggregate checks if a similar event has been seen according to the
 // aggregation configuration (max events, max interval, etc) and returns:
 //
-// - The (potentially modified) event that should be created
-// - The cache key for the event, for correlation purposes. This will be set to
-//   the full key for normal events, and to the result of
-//   EventAggregatorMessageFunc for aggregate events.
+//   - The (potentially modified) event that should be created
+//   - The cache key for the event, for correlation purposes. This will be set to
+//     the full key for normal events, and to the result of
+//     EventAggregatorMessageFunc for aggregate events.
 func (e *EventAggregator) EventAggregate(newEvent *v1.Event) (*v1.Event, string) {
 	now := metav1.NewTime(e.clock.Now())
 	var record aggregateRecord
 	// eventKey is the full cache key for this event
+	// dfy: eventKey 为 ns-object-name-uid-type-reason-message-component-controller
 	eventKey := getEventKey(newEvent)
 	// aggregateKey is for the aggregate event, if one is needed.
+	// dfy: 此处对应 EventAggregatorByReasonFunc 函数
+	// aggregateKey 为 ns-object-name-uid-type-reason-message-component-controller，作为 lru-cache-1 的 key
+	// localKey 为 event 的 message
 	aggregateKey, localKey := e.keyFunc(newEvent)
 
 	// Do we have a record of similar events in our cache?
 	e.Lock()
 	defer e.Unlock()
+	// dfy: 查询并获取 lru-cache-1 中的记录 record
 	value, found := e.cache.Get(aggregateKey)
 	if found {
 		record = value.(aggregateRecord)
@@ -258,23 +263,28 @@ func (e *EventAggregator) EventAggregate(newEvent *v1.Event) (*v1.Event, string)
 	// Is the previous record too old? If so, make a fresh one. Note: if we didn't
 	// find a similar record, its lastTimestamp will be the zero value, so we
 	// create a new one in that case.
+	// dfy: 默认是 600 s，10 min
 	maxInterval := time.Duration(e.maxIntervalInSeconds) * time.Second
 	interval := now.Time.Sub(record.lastTimestamp.Time)
+	// dfy: 距离上次插入超过 10 分钟，就清空该 key 对应 event set 列表（列表长度默认为 10 ）
 	if interval > maxInterval {
 		record = aggregateRecord{localKeys: sets.NewString()}
 	}
 
 	// Write the new event into the aggregation record and put it on the cache
+	// dfy: 每次插入，更新插入时间
 	record.localKeys.Insert(localKey)
 	record.lastTimestamp = now
 	e.cache.Add(aggregateKey, record)
 
 	// If we are not yet over the threshold for unique events, don't correlate them
+	// dfy: 若 key 对应的 set 列表没满，直接返回
 	if uint(record.localKeys.Len()) < e.maxEvents {
 		return newEvent, eventKey
 	}
 
 	// do not grow our local key set any larger than max
+	// dfy: 如果 key 对应的 set 列表满了（默认10个为上限），那么随意弹出一个
 	record.localKeys.PopAny()
 
 	// create a new aggregate event, and return the aggregateKey as the cache key
@@ -288,10 +298,11 @@ func (e *EventAggregator) EventAggregate(newEvent *v1.Event) (*v1.Event, string)
 		FirstTimestamp: now,
 		InvolvedObject: newEvent.InvolvedObject,
 		LastTimestamp:  now,
-		Message:        e.messageFunc(newEvent),
-		Type:           newEvent.Type,
-		Reason:         newEvent.Reason,
-		Source:         newEvent.Source,
+		// dfy: EventAggregatorByReasonMessageFunc 函数 ——"(combined from similar events): " + event.Message
+		Message: e.messageFunc(newEvent),
+		Type:    newEvent.Type,
+		Reason:  newEvent.Reason,
+		Source:  newEvent.Source,
 	}
 	return eventCopy, aggregateKey
 }
@@ -336,14 +347,23 @@ func (e *eventLogger) eventObserve(newEvent *v1.Event, key string) (*v1.Event, [
 	defer e.Unlock()
 
 	// Check if there is an existing event we should update
+	// dfy: 在 lru 缓存中查询该 key（ key 代表 event 的基础主体信息 如哪个 ns 下的 哪个 pod 什么reson 的 event，是个唯一标识信息）
+	// 举例子：一个 pod 可能会毫秒级别产生多个 event ，但是 reason 等信息都一致，就 event id 不一致，因此需要聚合这些重复的 event，只更新计数就好
+	// 因此可能会产生这样的 key： testns-testpod-create 表示 test ns 下 testpod 产生的 reason 为 create 的 event
 	lastObservation := e.lastEventObservationFromCache(key)
 
 	// If we found a result, prepare a patch
+	// dfy:
+	// 若在 lru 缓存中找到此 key，同时 count > 0 ，表示需要聚合
+	// 聚合会更新 该 event 出现的次数，但目前只能更新本地缓存中，无法更新 apiserver 中该 event 存储的信息
+	// 所以会产生个 patch，将该 event 中 count 信息的更新，后续更新到 apiserver
 	if lastObservation.count > 0 {
 		// update the event based on the last observation so patch will work as desired
 		event.Name = lastObservation.name
 		event.ResourceVersion = lastObservation.resourceVersion
+		// dfy: event 的第一次出现时间，要与 lru 缓存中保持一致
 		event.FirstTimestamp = lastObservation.firstTimestamp
+		// dfy: 更新 event 的出现次数
 		event.Count = int32(lastObservation.count) + 1
 
 		eventCopy2 := *event
@@ -353,16 +373,23 @@ func (e *eventLogger) eventObserve(newEvent *v1.Event, key string) (*v1.Event, [
 
 		newData, _ := json.Marshal(event)
 		oldData, _ := json.Marshal(eventCopy2)
+		// dfy: 将 event 的首次出现时间，出现次数等，更新到此 event 上，通过该 patch 提交给 apiserver 实现
 		patch, err = strategicpatch.CreateTwoWayMergePatch(oldData, newData, event)
 	}
 
 	// record our new observation
+	// dfy:
+	// 将 event 存入到另一个 lru 缓存中
+	// 并更新 event 的第一次出现时间和次数
 	e.cache.Add(
 		key,
 		eventLog{
-			count:           uint(event.Count),
-			firstTimestamp:  event.FirstTimestamp,
-			name:            event.Name,
+			// dfy: 记录 event 出现的次数
+			count: uint(event.Count),
+			// dfy: 记录 event 第一次出现的时间
+			firstTimestamp: event.FirstTimestamp,
+			name:           event.Name,
+			// dfy: 此处若是 聚合event，那么应该为空，因为并未创建，所以后续会通过 updateState 来更新此处
 			resourceVersion: event.ResourceVersion,
 		},
 	)
@@ -427,14 +454,14 @@ type EventCorrelateResult struct {
 // prior to interacting with the API server to record the event.
 //
 // The default behavior is as follows:
-//   * Aggregation is performed if a similar event is recorded 10 times
+//   - Aggregation is performed if a similar event is recorded 10 times
 //     in a 10 minute rolling interval.  A similar event is an event that varies only by
 //     the Event.Message field.  Rather than recording the precise event, aggregation
 //     will create a new event whose message reports that it has combined events with
 //     the same reason.
-//   * Events are incrementally counted if the exact same event is encountered multiple
+//   - Events are incrementally counted if the exact same event is encountered multiple
 //     times.
-//   * A source may burst 25 events about an object, but has a refill rate budget
+//   - A source may burst 25 events about an object, but has a refill rate budget
 //     per object of 1 event every 5 minutes to control long-tail of spam.
 func NewEventCorrelator(clock clock.PassiveClock) *EventCorrelator {
 	cacheSize := maxLruCacheEntries
@@ -453,7 +480,9 @@ func NewEventCorrelator(clock clock.PassiveClock) *EventCorrelator {
 	}
 }
 
+// dfy: 配置聚合器的参数
 func NewEventCorrelatorWithOptions(options CorrelatorOptions) *EventCorrelator {
+	// dfy: 若参数为空，配置默认参数
 	optionsWithDefaults := populateDefaults(options)
 	spamFilter := NewEventSourceObjectSpamFilter(
 		optionsWithDefaults.LRUCacheSize,
@@ -461,6 +490,7 @@ func NewEventCorrelatorWithOptions(options CorrelatorOptions) *EventCorrelator {
 		optionsWithDefaults.QPS,
 		optionsWithDefaults.Clock,
 		optionsWithDefaults.SpamKeyFunc)
+	// dfy: 创建聚合器
 	return &EventCorrelator{
 		filterFunc: spamFilter.Filter,
 		aggregator: NewEventAggregator(
@@ -476,6 +506,7 @@ func NewEventCorrelatorWithOptions(options CorrelatorOptions) *EventCorrelator {
 
 // populateDefaults populates the zero value options with defaults
 func populateDefaults(options CorrelatorOptions) CorrelatorOptions {
+	// dfy: lru 缓存条目最大数量为 4096
 	if options.LRUCacheSize == 0 {
 		options.LRUCacheSize = maxLruCacheEntries
 	}
@@ -485,15 +516,18 @@ func populateDefaults(options CorrelatorOptions) CorrelatorOptions {
 	if options.QPS == 0 {
 		options.QPS = defaultSpamQPS
 	}
+	// dfy: 猜测正确，是  EventAggregatorByReasonFunc 函数
 	if options.KeyFunc == nil {
 		options.KeyFunc = EventAggregatorByReasonFunc
 	}
 	if options.MessageFunc == nil {
 		options.MessageFunc = EventAggregatorByReasonMessageFunc
 	}
+	// dfy: 看见相同 event 10分钟内变化超过 10 次进行聚合
 	if options.MaxEvents == 0 {
 		options.MaxEvents = defaultAggregateMaxEvents
 	}
+	// dfy: 缓存中，event 存在大于此事件 600s，就更新缓存记录
 	if options.MaxIntervalInSeconds == 0 {
 		options.MaxIntervalInSeconds = defaultAggregateIntervalInSeconds
 	}
@@ -511,8 +545,11 @@ func (c *EventCorrelator) EventCorrelate(newEvent *v1.Event) (*EventCorrelateRes
 	if newEvent == nil {
 		return nil, fmt.Errorf("event is nil")
 	}
+	// dfy: lRU-Cache-1 存储 event 的最新插入时间，进行 event 的聚合
 	aggregateEvent, ckey := c.aggregator.EventAggregate(newEvent)
+	// dfy: LRU-Cache-2 存储 event 的最早发生时间，新 event 和最早 event 进行对比，形成 patch，用于更新 count 等
 	observedEvent, patch, err := c.logger.eventObserve(aggregateEvent, ckey)
+	// dfy: Filter主要时起到了一个限速的作用，通过令牌桶来进行过滤操作。 client-go/tools/record/events_cache.go
 	if c.filterFunc(observedEvent) {
 		return &EventCorrelateResult{Skip: true}, nil
 	}
@@ -520,6 +557,9 @@ func (c *EventCorrelator) EventCorrelate(newEvent *v1.Event) (*EventCorrelateRes
 }
 
 // UpdateState based on the latest observed state from server
+// dfy: 更新 LRU-Cache-2 的 event 信息，因为聚合 event 第一次产生，未创建之前不具有 ResourceVersion
+//
+//	因此 Create 创建，需要更新 event.ResourceVersion
 func (c *EventCorrelator) UpdateState(event *v1.Event) {
 	c.logger.updateState(event)
 }
